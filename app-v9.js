@@ -181,7 +181,7 @@ function analyze(img){
     if(g>r&&g>b&&g>60)green++; if(b>r&&b>g&&b>60){blue++; if((p/w)<h*0.42)blueTop++;}
     if(r>120&&g>70&&g<170&&b<g&&r>g*1.15&&r>b*1.4)skin++;
     if(r>g&&g>b&&r>100)warm++;}
-  let guess="Tĩnh vật / vật thể", conf=52;
+  let guess="Vật thể / cảnh (chưa rõ loại)", conf=50;
   if(skin/n>0.11){guess="Chân dung / con người";conf=Math.min(88,55+Math.round(skin/n*220));}
   else if(green/n>0.28){guess="Phong cảnh / thiên nhiên";conf=Math.min(90,55+Math.round(green/n*90));}
   else if(blue/n>0.30 && blueTop/Math.max(1,blue)>0.55){guess="Phong cảnh biển / bầu trời";conf=Math.min(88,52+Math.round(blue/n*85));}
@@ -509,6 +509,55 @@ $("#vRun").onclick=async()=>{
    ① Dựng khối (khung bao + trục + khối 3D cơ bản cho từng vật, nét chì xanh nhẹ)
    ② Đi nét chính bám theo khối   ③ Xóa đường dựng bằng tẩy dẻo (còn bóng ma 15%)
    ④ Hoàn thiện: nét đậm + chi tiết. Nét được truy vết từ chính ảnh người dùng. */
+
+function boxBlurGray(g,w,h,passes){
+  let src=Float32Array.from(g), dst=new Float32Array(w*h);
+  for(let pass=0;pass<passes;pass++){
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){ let s=0; for(let k=-2;k<=2;k++){ const nx=Math.max(0,Math.min(w-1,x+k)); s+=src[y*w+nx]; } dst[y*w+x]=s/5; }
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){ let s=0; for(let k=-2;k<=2;k++){ const ny=Math.max(0,Math.min(h-1,y+k)); s+=dst[ny*w+x]; } src[y*w+x]=s/5; }
+  }
+  return src;
+}
+function posterizeLevels(g,w,h,L){
+  const lv=new Int16Array(w*h);
+  for(let i=0;i<w*h;i++) lv[i]=Math.round(g[i]/255*(L-1));
+  return lv;
+}
+function boundaryBin(lv,w,h){
+  const bin=new Uint8Array(w*h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){ const p=y*w+x;
+    if((x<w-1&&lv[p]!==lv[p+1])||(y<h-1&&lv[p]!==lv[p+w])) bin[p]=1; }
+  return bin;
+}
+function closeBin(bin,w,h){
+  const dil=new Uint8Array(w*h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){ if(!bin[y*w+x])continue;
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ const nx=x+dx,ny=y+dy; if(nx>=0&&ny>=0&&nx<w&&ny<h) dil[ny*w+nx]=1; } }
+  const out=new Uint8Array(w*h);
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){ let ok=1;
+    for(let dy=-1;dy<=1&&ok;dy++)for(let dx=-1;dx<=1;dx++){ if(!dil[(y+dy)*w+x+dx]){ok=0;break;} }
+    out[y*w+x]=ok; }
+  return out;
+}
+function labelRegions(lv,w,h){
+  const seen=new Uint8Array(w*h), regs=[], stack=[];
+  for(let s=0;s<w*h;s++){
+    if(seen[s]) continue;
+    const level=lv[s]; let area=0,minX=w,minY=h,maxX=0,maxY=0;
+    stack.length=0; stack.push(s); seen[s]=1;
+    while(stack.length){ const cur=stack.pop(); area++; const cx=cur%w, cy=(cur/w)|0;
+      if(cx<minX)minX=cx; if(cx>maxX)maxX=cx; if(cy<minY)minY=cy; if(cy>maxY)maxY=cy;
+      if(cx>0&&!seen[cur-1]&&lv[cur-1]===level){seen[cur-1]=1;stack.push(cur-1);}
+      if(cx<w-1&&!seen[cur+1]&&lv[cur+1]===level){seen[cur+1]=1;stack.push(cur+1);}
+      if(cy>0&&!seen[cur-w]&&lv[cur-w]===level){seen[cur-w]=1;stack.push(cur-w);}
+      if(cy<h-1&&!seen[cur+w]&&lv[cur+w]===level){seen[cur+w]=1;stack.push(cur+w);} }
+    const bw=maxX-minX+1, bh=maxY-minY+1, fill=area/(bw*bh), aspect=bw/bh;
+    regs.push({x:minX/w,y:minY/h,w:bw/w,h:bh/h,fill,area,
+      kind: aspect<0.68 ? "cylinder" : (fill>=0.86 ? "box" : "ellipse")});
+  }
+  regs.sort((a,b)=>b.area-a.area);
+  return regs;
+}
 function sobelBinary(gray,w,h){
   const mag=new Float32Array(w*h);
   for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const p=y*w+x;
@@ -584,11 +633,18 @@ function prepareStrokes(){
   if(!state.img||!state.analysis) return;
   $("#strokePhase").textContent="Đang dựng khối & truy vết nét…";
   const a=state.analysis;
-  const {g,w,h}=grayArr(state.img,540);
-  const bin=sobelBinary(g,w,h);
+  const {g,w,h}=grayArr(state.img,480);
+  const blurred=boxBlurGray(g,w,h,2);
+  let lv=posterizeLevels(blurred,w,h,7);
+  let bin=closeBin(boundaryBin(lv,w,h),w,h);
   let paths=tracePaths(bin,w,h);
-  let total=0; const kept=[];
-  for(const p of paths){ if(total>42000) break; kept.push(p); total+=p.length; }
+  let total=0; for(const p of paths) total+=p.length;
+  if(total>11000){ // too much texture: coarser posterize -> cleaner, drawing-like lines
+    lv=posterizeLevels(blurred,w,h,5);
+    bin=closeBin(boundaryBin(lv,w,h),w,h);
+    paths=tracePaths(bin,w,h); total=0; for(const p of paths) total+=p.length;
+  }
+  const kept=[]; { let acc2=0; for(const p of paths){ if(acc2>42000) break; kept.push(p); acc2+=p.length; } }
   paths=kept;
   const W=STC.width,H=STC.height, iw=state.img.naturalWidth||state.img.width, ih=state.img.naturalHeight||state.img.height;
   const s=Math.min(W/iw,H/ih), fw=iw*s, fh=ih*s, fx=(W-fw)/2, fy=(H-fh)/2;
@@ -609,10 +665,12 @@ function prepareStrokes(){
   segsOf([[bx-bw*0.05,ccy],[bx+bw*1.05,ccy]],S4.A);
   let comps=(a.components||[]).filter(c=>c.w<=0.8&&c.h<=0.85);
   if(comps.length<2){
-    // Colour segmentation failed (typical for soft photos with busy backgrounds).
-    // Honest fallback construction for a full-frame subject: ONE overall mass fitted
-    // into the subject bbox + anchor masses at the strongest detail peaks (eyes,
-    // headband, hands, object corners) — the standard "big mass + landmarks" block-in.
+    // Tonal regions of the posterized image: only compact, object-like masses qualify.
+    const regs=labelRegions(lv,w,h).filter(r=>r.fill>=0.45&&r.area>=w*h*0.008&&r.area<=w*h*0.30&&r.w<=0.65&&r.h<=0.65);
+    comps=regs.slice(0,5).map(r=>({x:r.x,y:r.y,w:r.w,h:r.h,kind:r.kind}));
+  }
+  if(comps.length<1){
+    // Last resort for a full-frame subject: ONE overall mass + anchor masses at detail peaks.
     comps=[{x:a.bbox.x+a.bbox.w*0.05, y:a.bbox.y+a.bbox.h*0.05, w:a.bbox.w*0.9, h:a.bbox.h*0.9, kind:"ellipse"}];
     const cell=36, gw=Math.ceil(w/cell), gh=Math.ceil(h/cell), dens=new Float32Array(gw*gh);
     for(let y=0;y<h;y++)for(let x=0;x<w;x++){ if(bin[y*w+x]) dens[Math.floor(y/cell)*gw+Math.floor(x/cell)]++; }
