@@ -120,6 +120,25 @@ function getPixels(img,max=240){const [w,h]=fitSize(img.naturalWidth||img.width,
 const lum=(r,g,b)=>0.2126*r+0.7152*g+0.0722*b;
 function hex(r,g,b){return "#"+[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,"0")).join("").toUpperCase();}
 
+function labelComponents(mask,w,h){
+  const seen=new Uint8Array(w*h), comps=[], stack=[];
+  for(let s=0;s<w*h;s++){
+    if(!mask[s]||seen[s]) continue;
+    let area=0,minX=w,minY=h,maxX=0,maxY=0,sx=0,sy=0; stack.length=0; stack.push(s); seen[s]=1;
+    while(stack.length){ const cur=stack.pop(); area++; const cx=cur%w, cy=(cur/w)|0;
+      if(cx<minX)minX=cx; if(cx>maxX)maxX=cx; if(cy<minY)minY=cy; if(cy>maxY)maxY=cy; sx+=cx; sy+=cy;
+      if(cx>0&&mask[cur-1]&&!seen[cur-1]){seen[cur-1]=1;stack.push(cur-1);}
+      if(cx<w-1&&mask[cur+1]&&!seen[cur+1]){seen[cur+1]=1;stack.push(cur+1);}
+      if(cy>0&&mask[cur-w]&&!seen[cur-w]){seen[cur-w]=1;stack.push(cur-w);}
+      if(cy<h-1&&mask[cur+w]&&!seen[cur+w]){seen[cur+w]=1;stack.push(cur+w);} }
+    const bw=maxX-minX+1, bh=maxY-minY+1, fill=area/(bw*bh), aspect=bw/bh;
+    if(area<w*h*0.004||area>w*h*0.92) continue;
+    const kind = aspect<0.68 ? "cylinder" : (fill>=0.86 ? "box" : "ellipse");
+    comps.push({x:minX/w,y:minY/h,w:bw/w,h:bh/h,cx:sx/area/w,cy:sy/area/h,fill,aspect,kind,area});
+  }
+  comps.sort((a,b)=>b.area-a.area);
+  return comps.slice(0,6);
+}
 function analyze(img){
   const {data,w,h}=getPixels(img,240), d=data.data, n=w*h;
   let sumL=0,sumS=0,sumR=0,sumB=0, gray=new Float32Array(n);
@@ -146,11 +165,12 @@ function analyze(img){
   const bg=[0,1,2].map(k=>(cs[0][k]+cs[1][k]+cs[2][k]+cs[3][k])/4);
   // Subject bbox from colour distance to background
   let minX=w,minY=h,maxX=0,maxY=0,sx=0,sy=0,sn=0;
+  const subjMask=new Uint8Array(n);
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;
     // Pixel is background if it is close to ANY of the 4 corner colours —
     // this handles gradient skies and multi-colour backgrounds correctly.
     let dist=1e9; for(const cc of cs){const dd=Math.hypot(d[i]-cc[0],d[i+1]-cc[1],d[i+2]-cc[2]); if(dd<dist)dist=dd;}
-    if(dist>52){if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;sx+=x;sy+=y;sn++;}
+    if(dist>52){subjMask[y*w+x]=1;if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;sx+=x;sy+=y;sn++;}
   }
   if(sn<n*0.02){minX=w*0.15;minY=h*0.12;maxX=w*0.85;maxY=h*0.88;sx=w/2*n*0.5;sy=h/2*n*0.5;sn=n*0.5;}
   const palette=[...buckets.values()].sort((a,b)=>b.count-a.count).slice(0,6)
@@ -173,7 +193,7 @@ function analyze(img){
     orientation:(img.naturalWidth>=img.naturalHeight)?"Ngang (landscape)":"Dọc (portrait)",
     brightness:Math.round(mean), contrast:Math.round(contrast), saturation:Math.round(sumS/n*100),
     warmth: sumR/n - sumB/n, edgeDensity, complexity, palette, guess, conf, lightDir,
-    bbox:{x:minX/w,y:minY/h,w:(maxX-minX)/w,h:(maxY-minY)/h},
+    bbox:{x:minX/w,y:minY/h,w:(maxX-minX)/w,h:(maxY-minY)/h}, components:labelComponents(subjMask,w,h),
     centroid:{x:sx/sn/w,y:sy/sn/h}, coverage:Math.round(sn/n*100), gray, data, pw:w, ph:h };
 }
 
@@ -485,9 +505,10 @@ $("#vRun").onclick=async()=>{
   finally{ $("#vProgress").hidden=true; }
 };
 
-/* ---------------- VẼ THẬT TỪNG NÉT (stroke-by-stroke) ----------------
-   Truy vết đường nét từ ảnh thật của người dùng rồi phát lại quá trình vẽ:
-   giai đoạn 1 = nét dựng nhẹ (các nét dài nhất), giai đoạn 2 = nét chính đậm. */
+/* ---------------- VẼ THẬT TỪNG NÉT — 4 GIAI ĐOẠN DẠY VẼ ----------------
+   ① Dựng khối (khung bao + trục + khối 3D cơ bản cho từng vật, nét chì xanh nhẹ)
+   ② Đi nét chính bám theo khối   ③ Xóa đường dựng bằng tẩy dẻo (còn bóng ma 15%)
+   ④ Hoàn thiện: nét đậm + chi tiết. Nét được truy vết từ chính ảnh người dùng. */
 function sobelBinary(gray,w,h,thr){
   const bin=new Uint8Array(w*h);
   for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const p=y*w+x;
@@ -505,7 +526,7 @@ function tracePaths(bin,w,h){
     while(guard++<6000){
       let moved=false;
       for(let s=0;s<8;s++){
-        const nd=(dir+7+s)%8; // search order: back-left first, then sweep around (contour following)
+        const nd=(dir+7+s)%8;
         const nx=(cur%w)+DIRS[nd][0], ny=Math.floor(cur/w)+DIRS[nd][1];
         if(nx<0||ny<0||nx>=w||ny>=h) continue;
         const np=ny*w+nx;
@@ -523,65 +544,101 @@ function tracePaths(bin,w,h){
   paths.sort((a,b)=>b.length-a.length);
   return paths;
 }
+const STB=$("#strokeBase"), SBX=STB.getContext("2d");
 const STC=$("#strokeCanvas"), STX=STC.getContext("2d"), SCC=$("#strokeCursor"), SCX=SCC.getContext("2d");
-const stroke={segs:[],phase1End:0,drawn:0,playing:false,raf:null,fit:null,ready:false};
+const S4={A:[],B:[],D:[],fade:300,aEnd:0,bEnd:0,fEnd:0,total:0,t:0,playing:false,raf:null,fit:null,ready:false,stage:-1};
+const STYLE_A={color:"rgba(70,95,140,.62)",width:1.7};   // construction pencil (blue-grey, light)
+const STYLE_B={color:"rgba(97,85,71,.78)",width:1.8};    // main lines over the blocks
+const STYLE_D={color:"rgba(38,31,25,.95)",width:2.1};    // final dark lines + details
+const STAGE_TIPS=[
+ "① DỰNG KHỐI — Học: đo khung bao quanh chủ thể, kẻ trục chính, rồi ép MỖI vật về khối 3D gần nhất: hộp, trụ hoặc cầu (khung xanh xám). Nét ở bước này phải thật nhẹ — vì lát nữa ta sẽ xóa nó đi.",
+ "② ĐI NÉT CHÍNH — Học: vẽ đường viền thật bám sát khối đã dựng. Khối cho bạn tỉ lệ và vị trí; nét chính cho hình dáng thật. Chưa thêm chi tiết, chưa nhấn đậm.",
+ "③ XÓA ĐƯỜNG DỰNG — Học: dùng tẩy dẻo nhấc bớt chì: đường dựng không mất hẳn mà thành “bóng ma” ~15%, đủ để nét chính không lạc đường nhưng không còn tranh chấp với nét thật.",
+ "④ HOÀN THIỆN — Học: đi lại toàn bộ nét chính bằng nét đậm dứt khoát, rồi mới thêm các nét chi tiết nhỏ và chất liệu. Thứ tự này — khối → nét → xóa → hoàn thiện — là xương sống của mọi bài vẽ đúng phương pháp."];
 function prepareStrokes(){
-  if(!state.img) return;
-  $("#strokePhase").textContent="Đang truy vết nét từ ảnh…";
+  if(!state.img||!state.analysis) return;
+  $("#strokePhase").textContent="Đang dựng khối & truy vết nét…";
+  const a=state.analysis;
   const {g,w,h}=grayArr(state.img,540);
   const bin=sobelBinary(g,w,h,120);
   let paths=tracePaths(bin,w,h);
-  // Cap total points so the replay stays watchable
   let total=0; const kept=[];
   for(const p of paths){ if(total>42000) break; kept.push(p); total+=p.length; }
   paths=kept;
-  // Fit rect identical to the other canvases
   const W=STC.width,H=STC.height, iw=state.img.naturalWidth||state.img.width, ih=state.img.naturalHeight||state.img.height;
   const s=Math.min(W/iw,H/ih), fw=iw*s, fh=ih*s, fx=(W-fw)/2, fy=(H-fh)/2;
-  stroke.fit={x:fx,y:fy,w:fw,h:fh};
-  const toXY=pt=>[fx+pt[0]*fw, fy+pt[1]*fh];
-  stroke.segs=[];
-  const pushPath=(p,style)=>{ for(let i=1;i<p.length;i++){ const a=toXY(p[i-1]), b=toXY(p[i]); stroke.segs.push({x1:a[0],y1:a[1],x2:b[0],y2:b[1],style}); } };
-  // Phase 1: construction — the longest paths covering ~38% of all points
-  let acc=0; const p1=[];
-  for(const p of paths){ if(acc>total*0.38) break; p1.push(p); acc+=p.length; }
-  p1.forEach(p=>pushPath(p,0));
-  stroke.phase1End=stroke.segs.length;
-  // Phase 2: main lines — every path, longest first then the rest top-to-bottom
-  paths.forEach(p=>pushPath(p,1));
-  stroke.drawn=0; stroke.ready=true; stroke.playing=false;
-  $("#strokePlay").textContent="▶ Vẽ từng nét";
-  $("#strokePhase").textContent=stroke.segs.length?`Sẵn sàng: ${paths.length} nét · bấm ▶ để xem vẽ`:"Không tìm thấy nét rõ trong ảnh này — hãy thử ảnh có đường nét rõ hơn";
-  $("#strokeStats").textContent=`${paths.length} nét · ${stroke.segs.length.toLocaleString("vi-VN")} đoạn`;
-  drawStrokeUpTo(0);
-}
-function paintSegs(from,to){
-  let curStyle=-1;
-  STX.lineCap="round"; STX.lineJoin="round"; STX.beginPath();
-  for(let i=from;i<to;i++){ const sg=stroke.segs[i];
-    if(sg.style!==curStyle){ STX.stroke(); curStyle=sg.style;
-      if(curStyle===0){ STX.strokeStyle="rgba(105,92,78,.5)"; STX.lineWidth=1.6; } else { STX.strokeStyle="rgba(43,36,30,.92)"; STX.lineWidth=2.1; }
-      STX.beginPath(); }
-    STX.moveTo(sg.x1,sg.y1); STX.lineTo(sg.x2,sg.y2);
+  S4.fit={x:fx,y:fy,w:fw,h:fh};
+  const X=u=>fx+u*fw, Y=v=>fy+v*fh;
+  const segsOf=(pts,out)=>{ for(let i=1;i<pts.length;i++) out.push({x1:pts[i-1][0],y1:pts[i-1][1],x2:pts[i][0],y2:pts[i][1]}); };
+  const rect=(x,y,w2,h2,out)=>segsOf([[x,y],[x+w2,y],[x+w2,y+h2],[x,y+h2],[x,y]],out);
+  const ellipse=(cx,cy,rx,ry,out,n=44)=>{ const pts=[]; for(let i=0;i<=n;i++){const th=i/n*Math.PI*2; pts.push([cx+rx*Math.cos(th), cy+ry*Math.sin(th)]);} segsOf(pts,out); };
+  const arc=(cx,cy,rx,ry,a0,a1,out,n=20)=>{ const pts=[]; for(let i=0;i<=n;i++){const th=a0+(a1-a0)*i/n; pts.push([cx+rx*Math.cos(th), cy+ry*Math.sin(th)]);} segsOf(pts,out); };
+  /* ---- Stage A: construction ---- */
+  S4.A=[];
+  const bx=X(a.bbox.x), by=Y(a.bbox.y), bw=a.bbox.w*fw, bh=a.bbox.h*fh;
+  rect(bx,by,bw,bh,S4.A);                                            // bounding box
+  for(let i=1;i<3;i++){                                              // thirds inside the box
+    segsOf([[bx+bw*i/3,by],[bx+bw*i/3,by+bh]],S4.A);
+    segsOf([[bx,by+bh*i/3],[bx+bw,by+bh*i/3]],S4.A); }
+  const ccx=X(a.centroid.x), ccy=Y(a.centroid.y);                    // main axes through the centroid
+  segsOf([[ccx,by-bh*0.05],[ccx,by+bh*1.05]],S4.A);
+  segsOf([[bx-bw*0.05,ccy],[bx+bw*1.05,ccy]],S4.A);
+  const comps=(a.components&&a.components.length)?a.components:[{x:a.bbox.x,y:a.bbox.y,w:a.bbox.w,h:a.bbox.h,kind:"box"}];
+  S4.compKinds=comps.map(c=>c.kind);
+  for(const c of comps){
+    const x=X(c.x), y=Y(c.y), w2=c.w*fw, h2=c.h*fh, cx=x+w2/2, cy=y+h2/2;
+    if(c.kind==="ellipse"){ ellipse(cx,cy,w2/2,h2/2,S4.A); arc(cx,cy,w2/2,h2*0.28,0,Math.PI,S4.A); }
+    else if(c.kind==="cylinder"){ segsOf([[x,y+ h2*0.06],[x,y+h2]],S4.A); segsOf([[x+w2,y+h2*0.06],[x+w2,y+h2]],S4.A);
+      ellipse(cx,y+h2*0.06,w2/2,h2*0.06,S4.A,32); arc(cx,y+h2,w2/2,h2*0.06,0,Math.PI,S4.A); }
+    else { rect(x,y,w2,h2,S4.A); segsOf([[x,y+h2*0.18],[x+w2,y+h2*0.18]],S4.A); }  // box + top-face edge
   }
-  STX.stroke();
+  /* ---- Stage B: main contour lines (longest ~55% of points) ---- */
+  S4.B=[]; let acc=0;
+  for(const p of paths){ if(acc>total*0.55) break; acc+=p.length;
+    segsOf(p.map(pt=>[X(pt[0]),Y(pt[1])]),S4.B); }
+  /* ---- Stage D: every line, dark, incl. short detail strokes ---- */
+  S4.D=[];
+  for(const p of paths) segsOf(p.map(pt=>[X(pt[0]),Y(pt[1])]),S4.D);
+  S4.aEnd=S4.A.length; S4.bEnd=S4.aEnd+S4.B.length; S4.fEnd=S4.bEnd+S4.fade; S4.total=S4.fEnd+S4.D.length;
+  S4.t=0; S4.playing=false; S4.ready=true; S4.stage=-1;
+  $("#strokePlay").textContent="▶ Vẽ theo 4 giai đoạn";
+  renderS4(0);
 }
-function drawStrokeUpTo(n){
-  STX.fillStyle="#f7f3ea"; STX.fillRect(0,0,STC.width,STC.height);
-  if(stroke.fit){ STX.strokeStyle="rgba(120,105,85,.35)"; STX.lineWidth=1; STX.strokeRect(stroke.fit.x,stroke.fit.y,stroke.fit.w,stroke.fit.h); }
-  paintSegs(0,n); stroke.drawn=n; updateStrokeUI();
+function paintSegList(ctx,list,from,to,style){
+  if(to<=from) return;
+  ctx.strokeStyle=style.color; ctx.lineWidth=style.width; ctx.lineCap="round"; ctx.lineJoin="round";
+  ctx.beginPath();
+  for(let i=from;i<to;i++){ const sg=list[i]; ctx.moveTo(sg.x1,sg.y1); ctx.lineTo(sg.x2,sg.y2); }
+  ctx.stroke();
 }
-function updateStrokeUI(){
-  const n=stroke.segs.length, d=Math.floor(stroke.drawn);
-  const pct=n?Math.round(d/n*100):0;
-  $("#strokeScrub").value=n?Math.round(d/n*1000):0;
-  $("#strokeStats").textContent=`${d.toLocaleString("vi-VN")} / ${n.toLocaleString("vi-VN")} đoạn · ${pct}%`;
-  $("#strokePhase").textContent = !stroke.ready ? "Đang chuẩn bị nét…" :
-    d>=n && n>0 ? "✅ Vẽ xong — đây là bản nét hoàn chỉnh từ ảnh của bạn" :
-    (d===0 && !stroke.playing) ? `Sẵn sàng · bấm ▶ để xem vẽ từng nét` :
-    d<stroke.phase1End ? "✏️ Giai đoạn 1 — nét dựng nhẹ (khối & đường dài)" : "🖊️ Giai đoạn 2 — đi nét chính đậm dần";
-  if(d>0&&d<=stroke.segs.length){ const sg=stroke.segs[Math.min(d,stroke.segs.length)-1]; drawPencil(sg.x2,sg.y2); }
-  else SCX.clearRect(0,0,SCC.width,SCC.height);
+function stageOf(t){
+  if(t<S4.aEnd) return 0; if(t<S4.bEnd) return 1; if(t<S4.fEnd) return 2; if(t<S4.total) return 3; return 4;
+}
+function renderS4(t){
+  S4.t=t;
+  SBX.clearRect(0,0,STB.width,STB.height); STX.clearRect(0,0,STC.width,STC.height);
+  paintSegList(SBX,S4.A,0,Math.min(Math.floor(t),S4.aEnd),STYLE_A);
+  let op=1;
+  if(t>=S4.fEnd) op=0.15; else if(t>S4.bEnd) op=1-0.85*((t-S4.bEnd)/S4.fade);
+  STB.style.opacity=op.toFixed(3);
+  paintSegList(STX,S4.B,0,Math.max(0,Math.min(Math.floor(t)-S4.aEnd,S4.B.length)),STYLE_B);
+  paintSegList(STX,S4.D,0,Math.max(0,Math.min(Math.floor(t)-S4.fEnd,S4.D.length)),STYLE_D);
+  const st=stageOf(t), pct=S4.total?Math.round(t/S4.total*100):0;
+  $("#strokeScrub").value=S4.total?Math.round(t/S4.total*1000):0;
+  $("#strokeStats").textContent=`${pct}% · ${S4.A.length+S4.B.length+S4.D.length} đoạn nét`;
+  const chip=$("#strokePhase");
+  if(!S4.ready) chip.textContent="Đang chuẩn bị…";
+  else if(st===4) chip.textContent="✅ Hoàn thiện xong — bản nét cuối: khối đã xóa mờ, nét chính + chi tiết đã khóa";
+  else chip.textContent=["📐 Giai đoạn 1/4 — Dựng khối","✏️ Giai đoạn 2/4 — Đi nét chính","🧽 Giai đoạn 3/4 — Xóa đường dựng (tẩy dẻo)","🖊️ Giai đoạn 4/4 — Hoàn thiện nét & chi tiết"][st];
+  if(st!==S4.stage){ S4.stage=st; $("#strokeTip").textContent = st===4 ? STAGE_TIPS[3] : (STAGE_TIPS[st]||""); }
+  // pencil position: end of the segment currently being drawn
+  let cur=null;
+  if(t>0&&t<S4.total){
+    if(t<S4.aEnd) cur=S4.A[Math.floor(t)];
+    else if(t<S4.bEnd) cur=S4.B[Math.floor(t)-S4.aEnd];
+    else if(t>=S4.fEnd) cur=S4.D[Math.floor(t)-S4.fEnd];
+  }
+  if(cur&&S4.playing) drawPencil(cur.x2,cur.y2); else SCX.clearRect(0,0,SCC.width,SCC.height);
 }
 function drawPencil(x,y){
   SCX.clearRect(0,0,SCC.width,SCC.height);
@@ -590,24 +647,28 @@ function drawPencil(x,y){
   SCX.fillStyle="rgba(229,49,112,.9)"; SCX.beginPath(); SCX.arc(x,y,3.2,0,7); SCX.fill();
 }
 function strokeTick(){
-  if(!stroke.playing) return;
+  if(!S4.playing) return;
   const speed=(+$("#strokeSpeed").value)/100;
-  const perFrame=Math.max(2, stroke.segs.length/(22*60)*speed);
-  const next=Math.min(stroke.segs.length, stroke.drawn+perFrame);
-  paintSegs(Math.floor(stroke.drawn), Math.floor(next));
-  stroke.drawn=next; updateStrokeUI();
-  if(stroke.drawn>=stroke.segs.length){ stroke.playing=false; $("#strokePlay").textContent="▶ Vẽ lại"; SCX.clearRect(0,0,SCC.width,SCC.height); return; }
-  stroke.raf=requestAnimationFrame(strokeTick);
+  const next=Math.min(S4.total, S4.t + S4.total/(30*60)*speed);
+  renderS4(next);
+  if(S4.t>=S4.total){ S4.playing=false; $("#strokePlay").textContent="▶ Vẽ lại"; SCX.clearRect(0,0,SCC.width,SCC.height); return; }
+  S4.raf=requestAnimationFrame(strokeTick);
 }
 $("#strokePlay").onclick=()=>{
-  if(!stroke.ready) return;
-  if(stroke.playing){ stroke.playing=false; cancelAnimationFrame(stroke.raf); $("#strokePlay").textContent="▶ Vẽ tiếp"; return; }
-  if(stroke.drawn>=stroke.segs.length) drawStrokeUpTo(0);
-  stroke.playing=true; $("#strokePlay").textContent="⏸ Tạm dừng"; stroke.raf=requestAnimationFrame(strokeTick);
+  if(!S4.ready) return;
+  if(S4.playing){ S4.playing=false; cancelAnimationFrame(S4.raf); $("#strokePlay").textContent="▶ Vẽ tiếp"; renderS4(S4.t); return; }
+  if(S4.t>=S4.total) renderS4(0);
+  S4.playing=true; $("#strokePlay").textContent="⏸ Tạm dừng"; S4.raf=requestAnimationFrame(strokeTick);
 };
-$("#strokeRestart").onclick=()=>{ if(!stroke.ready)return; stroke.playing=false; cancelAnimationFrame(stroke.raf); drawStrokeUpTo(0); $("#strokePlay").textContent="▶ Vẽ từng nét"; };
+$("#strokeRestart").onclick=()=>{ if(!S4.ready)return; S4.playing=false; cancelAnimationFrame(S4.raf); renderS4(0); $("#strokePlay").textContent="▶ Vẽ theo 4 giai đoạn"; };
 $("#strokeSpeed").oninput=e=>{ $("#strokeSpeedVal").textContent=((+e.target.value)/100).toFixed(2).replace(/\.?0+$/,"")+"×"; };
-$("#strokeScrub").oninput=e=>{ if(!stroke.ready)return; stroke.playing=false; cancelAnimationFrame(stroke.raf); const target=Math.round(stroke.segs.length*(+e.target.value)/1000); $("#strokePlay").textContent = target>=stroke.segs.length ? "▶ Vẽ lại" : "▶ Vẽ tiếp"; drawStrokeUpTo(target); };
-$("#strokePencil").onchange=()=>updateStrokeUI();
-$("#strokeDownload").onclick=()=>{ if(!stroke.ready)return; const keep=stroke.drawn; drawStrokeUpTo(stroke.segs.length);
-  const a=document.createElement("a"); a.download="ban-net-hoan-chinh.png"; a.href=STC.toDataURL("image/png"); a.click(); drawStrokeUpTo(keep); };
+$("#strokeScrub").oninput=e=>{ if(!S4.ready)return; S4.playing=false; cancelAnimationFrame(S4.raf);
+  const target=Math.round(S4.total*(+e.target.value)/1000);
+  $("#strokePlay").textContent = target>=S4.total ? "▶ Vẽ lại" : "▶ Vẽ tiếp"; renderS4(target); };
+$("#strokePencil").onchange=()=>renderS4(S4.t);
+$("#strokeDownload").onclick=()=>{ if(!S4.ready)return;
+  const c=makeCanvas(STC.width,STC.height), x=c.getContext("2d");
+  x.fillStyle="#f7f3ea"; x.fillRect(0,0,c.width,c.height);
+  x.save(); x.globalAlpha=0.15; paintSegList(x,S4.A,0,S4.A.length,STYLE_A); x.restore();
+  paintSegList(x,S4.D,0,S4.D.length,STYLE_D);
+  const a=document.createElement("a"); a.download="ban-net-4-giai-doan.png"; a.href=c.toDataURL("image/png"); a.click(); };
