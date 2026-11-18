@@ -147,22 +147,24 @@ function analyze(img){
   // Subject bbox from colour distance to background
   let minX=w,minY=h,maxX=0,maxY=0,sx=0,sy=0,sn=0;
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;
-    const dist=Math.hypot(d[i]-bg[0],d[i+1]-bg[1],d[i+2]-bg[2]);
+    // Pixel is background if it is close to ANY of the 4 corner colours —
+    // this handles gradient skies and multi-colour backgrounds correctly.
+    let dist=1e9; for(const cc of cs){const dd=Math.hypot(d[i]-cc[0],d[i+1]-cc[1],d[i+2]-cc[2]); if(dd<dist)dist=dd;}
     if(dist>52){if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;sx+=x;sy+=y;sn++;}
   }
   if(sn<n*0.02){minX=w*0.15;minY=h*0.12;maxX=w*0.85;maxY=h*0.88;sx=w/2*n*0.5;sy=h/2*n*0.5;sn=n*0.5;}
   const palette=[...buckets.values()].sort((a,b)=>b.count-a.count).slice(0,6)
     .map(bk=>({hex:hex(bk.r/bk.count,bk.g/bk.count,bk.b/bk.count),pct:Math.round(bk.count/n*100)}));
   // Hue family counts for a subject guess
-  let green=0,blue=0,skin=0,warm=0;
-  for(let i=0;i<d.length;i+=4){const r=d[i],g=d[i+1],b=d[i+2];
-    if(g>r&&g>b&&g>60)green++; if(b>r&&b>g&&b>60)blue++;
+  let green=0,blue=0,skin=0,warm=0,blueTop=0;
+  for(let p=0,i=0;i<d.length;i+=4,p++){const r=d[i],g=d[i+1],b=d[i+2];
+    if(g>r&&g>b&&g>60)green++; if(b>r&&b>g&&b>60){blue++; if((p/w)<h*0.42)blueTop++;}
     if(r>120&&g>70&&g<170&&b<g&&r>g*1.15&&r>b*1.4)skin++;
     if(r>g&&g>b&&r>100)warm++;}
   let guess="Tĩnh vật / vật thể", conf=52;
   if(skin/n>0.06){guess="Chân dung / con người";conf=Math.min(88,55+Math.round(skin/n*220));}
   else if(green/n>0.28){guess="Phong cảnh / thiên nhiên";conf=Math.min(90,55+Math.round(green/n*90));}
-  else if(blue/n>0.30){guess="Phong cảnh biển / bầu trời";conf=Math.min(88,52+Math.round(blue/n*85));}
+  else if(blue/n>0.30 && blueTop/Math.max(1,blue)>0.55){guess="Phong cảnh biển / bầu trời";conf=Math.min(88,52+Math.round(blue/n*85));}
   else if(edgeDensity>0.16){guess="Kiến trúc / đường phố (nhiều đường thẳng)";conf=64;}
   const lightDir = brightN>20 ? `${brightY/brightN < h*0.45 ? "trên" : "dưới"} – ${brightX/brightN < w*0.45 ? "trái" : brightX/brightN > w*0.55 ? "phải":"giữa"}` : "tán xạ (không có vùng cháy sáng rõ)";
   const complexity = edgeDensity<0.05?"Thấp — hợp người mới":edgeDensity<0.11?"Trung bình":edgeDensity<0.18?"Cao — cần đơn giản hóa mạnh ở bước khối":"Rất cao — bắt buộc bỏ 70% chi tiết ở các bước đầu";
@@ -216,8 +218,8 @@ function renderStep(idx){
     SX.fillStyle="#e53170";SX.font="bold 17px sans-serif";SX.fillText("KHỐI CƠ BẢN BÊN TRONG: hộp / trụ / cầu",14,26);}
   else if(idx===5){const {data,pw,ph}=a;const c=makeCanvas(pw,ph),x=c.getContext("2d");const id=x.createImageData(pw,ph),o=id.data;const d=data.data;
     // rebuild bg from analysis data corners approximation: use threshold on distance stored? recompute quick via luminance+colour dist to corner colour
-    const bgc=[d[0],d[1],d[2]];
-    for(let p=0,i=0;p<pw*ph;p++,i+=4){const dist=Math.hypot(d[i]-bgc[0],d[i+1]-bgc[1],d[i+2]-bgc[2]);const v=dist>52?18:245;o[i]=o[i+1]=o[i+2]=v;o[i+3]=255;}
+    const corners=[[0,0],[pw-1,0],[0,ph-1],[pw-1,ph-1]].map(([cx,cy])=>{const ii=(cy*pw+cx)*4;return[d[ii],d[ii+1],d[ii+2]];});
+    for(let p=0,i=0;p<pw*ph;p++,i+=4){let dist=1e9;for(const cc of corners){const dd=Math.hypot(d[i]-cc[0],d[i+1]-cc[1],d[i+2]-cc[2]);if(dd<dist)dist=dd;}const v=dist>52?18:245;o[i]=o[i+1]=o[i+2]=v;o[i+3]=255;}
     x.putImageData(id,0,0);drawFitted(SX,c,W,H);
     SX.fillStyle="#111";SX.font="bold 17px sans-serif";SX.fillText("SILHOUETTE: chỉ còn dương hình / âm hình",14,26);}
   else if(idx===6){const c=edgeCanvas(img,1,true);drawFitted(SX,c,W,H);
