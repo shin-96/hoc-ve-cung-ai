@@ -498,7 +498,7 @@ $("#vRun").onclick=async()=>{
     if(!res.ok) throw new Error(vErr(res.status,await res.text()));
     const j=await res.json(); const text=j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;
     state.vision=parseVisionJSON(text);
-    renderVision(state.vision);
+    renderVision(state.vision); setTimeout(prepareStrokes,80);
     $("#vStatus").textContent=`✅ Phân tích sâu xong bằng model ${c.model}. Mở từng bước học bên dưới để xem lời khuyên riêng.`;
     if(!$("#ve-tung-buoc").hidden) showStep(state.step);
   }catch(e){ $("#vStatus").textContent="❌ Phân tích sâu thất bại: "+e.message; }
@@ -635,13 +635,30 @@ function prepareStrokes(){
   const a=state.analysis;
   const {g,w,h}=grayArr(state.img,480);
   const blurred=boxBlurGray(g,w,h,2);
-  let lv=posterizeLevels(blurred,w,h,7);
-  let bin=closeBin(boundaryBin(lv,w,h),w,h);
+  function sobelBin(gr,pct){
+    const mag=new Float32Array(w*h);
+    for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const pp=y*w+x;
+      const gx=-gr[pp-w-1]-2*gr[pp-1]-gr[pp+w-1]+gr[pp-w+1]+2*gr[pp+1]+gr[pp+w+1];
+      const gy=-gr[pp-w-1]-2*gr[pp-w]-gr[pp-w+1]+gr[pp+w-1]+2*gr[pp+w]+gr[pp+w+1];
+      mag[pp]=Math.hypot(gx,gy);}
+    const sample=[]; for(let i=0;i<w*h;i+=7) sample.push(mag[i]);
+    sample.sort((a2,b2)=>a2-b2);
+    const thr=Math.max(45,Math.min(240,sample[Math.floor(sample.length*pct)]||110));
+    const out=new Uint8Array(w*h);
+    for(let pp=0;pp<w*h;pp++) if(mag[pp]>thr) out[pp]=1;
+    return out;
+  }
+  function buildBin(L,pct){
+    const lv2=posterizeLevels(blurred,w,h,L), b1=boundaryBin(lv2,w,h), b2=sobelBin(blurred,pct);
+    const u=new Uint8Array(w*h);
+    for(let pp=0;pp<w*h;pp++) u[pp]=b1[pp]||b2[pp]?1:0;
+    return {bin:closeBin(u,w,h), lv:lv2};
+  }
+  let built=buildBin(6,0.93); let bin=built.bin; let lv=built.lv;
   let paths=tracePaths(bin,w,h);
   let total=0; for(const p of paths) total+=p.length;
-  if(total>11000){ // too much texture: coarser posterize -> cleaner, drawing-like lines
-    lv=posterizeLevels(blurred,w,h,5);
-    bin=closeBin(boundaryBin(lv,w,h),w,h);
+  if(total>11000){ // too much texture: coarser union -> cleaner, drawing-like lines
+    built=buildBin(5,0.955); bin=built.bin; lv=built.lv;
     paths=tracePaths(bin,w,h); total=0; for(const p of paths) total+=p.length;
   }
   const kept=[]; { let acc2=0; for(const p of paths){ if(acc2>42000) break; kept.push(p); acc2+=p.length; } }
@@ -663,7 +680,15 @@ function prepareStrokes(){
   const ccx=X(a.centroid.x), ccy=Y(a.centroid.y);
   segsOf([[ccx,by-bh*0.05],[ccx,by+bh*1.05]],S4.A);
   segsOf([[bx-bw*0.05,ccy],[bx+bw*1.05,ccy]],S4.A);
-  let comps=(a.components||[]).filter(c=>c.w<=0.8&&c.h<=0.85);
+  let comps=[];
+  if(state.vision&&Array.isArray(state.vision.subjects)&&state.vision.subjects.length){
+    // Best source: the AI Vision subject boxes the user generated in the section above.
+    comps=state.vision.subjects.filter(s2=>s2.bbox_pct&&(s2.bbox_pct.w||0)>=4&&(s2.bbox_pct.h||0)>=4).slice(0,6)
+      .map(s2=>{ const b=s2.bbox_pct, asp=(b.w||1)/Math.max(1,b.h||1);
+        return {x:(b.x||0)/100, y:(b.y||0)/100, w:(b.w||0)/100, h:(b.h||0)/100,
+                kind: asp<0.68 ? "cylinder" : (asp>1.9 ? "box" : "ellipse")}; });
+  }
+  if(comps.length<1) comps=(a.components||[]).filter(c=>c.w<=0.8&&c.h<=0.85);
   if(comps.length<2){
     // Tonal regions of the posterized image: only compact, object-like masses qualify.
     const regs=labelRegions(lv,w,h).filter(r=>r.fill>=0.45&&r.area>=w*h*0.008&&r.area<=w*h*0.30&&r.w<=0.65&&r.h<=0.65);
