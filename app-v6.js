@@ -578,6 +578,7 @@ function updateStrokeUI(){
   $("#strokeStats").textContent=`${d.toLocaleString("vi-VN")} / ${n.toLocaleString("vi-VN")} đoạn · ${pct}%`;
   $("#strokePhase").textContent = !stroke.ready ? "Đang chuẩn bị nét…" :
     d>=n && n>0 ? "✅ Vẽ xong — đây là bản nét hoàn chỉnh từ ảnh của bạn" :
+    (d===0 && !stroke.playing) ? `Sẵn sàng · bấm ▶ để xem vẽ từng nét` :
     d<stroke.phase1End ? "✏️ Giai đoạn 1 — nét dựng nhẹ (khối & đường dài)" : "🖊️ Giai đoạn 2 — đi nét chính đậm dần";
   if(d>0&&d<=stroke.segs.length){ const sg=stroke.segs[Math.min(d,stroke.segs.length)-1]; drawPencil(sg.x2,sg.y2); }
   else SCX.clearRect(0,0,SCC.width,SCC.height);
@@ -606,7 +607,7 @@ $("#strokePlay").onclick=()=>{
 };
 $("#strokeRestart").onclick=()=>{ if(!stroke.ready)return; stroke.playing=false; cancelAnimationFrame(stroke.raf); drawStrokeUpTo(0); $("#strokePlay").textContent="▶ Vẽ từng nét"; };
 $("#strokeSpeed").oninput=e=>{ $("#strokeSpeedVal").textContent=((+e.target.value)/100).toFixed(2).replace(/\.?0+$/,"")+"×"; };
-$("#strokeScrub").oninput=e=>{ if(!stroke.ready)return; stroke.playing=false; cancelAnimationFrame(stroke.raf); $("#strokePlay").textContent="▶ Vẽ tiếp"; drawStrokeUpTo(Math.round(stroke.segs.length*(+e.target.value)/1000)); };
+$("#strokeScrub").oninput=e=>{ if(!stroke.ready)return; stroke.playing=false; cancelAnimationFrame(stroke.raf); const target=Math.round(stroke.segs.length*(+e.target.value)/1000); $("#strokePlay").textContent = target>=stroke.segs.length ? "▶ Vẽ lại" : "▶ Vẽ tiếp"; drawStrokeUpTo(target); };
 $("#strokePencil").onchange=()=>updateStrokeUI();
 $("#strokeDownload").onclick=()=>{ if(!stroke.ready)return; const keep=stroke.drawn; drawStrokeUpTo(stroke.segs.length);
   const a=document.createElement("a"); a.download="ban-net-hoan-chinh.png"; a.href=STC.toDataURL("image/png"); a.click(); drawStrokeUpTo(keep); };
