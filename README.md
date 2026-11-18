@@ -80,7 +80,7 @@ HTML + CSS + JavaScript thuần (không framework, không build). Xử lý ảnh
 ```
 index.html   — giao diện
 styles.css   — theme studio tối, responsive, có CSS in ấn
-app-v3.js    — phân tích ảnh, nội dung 13 bước, render minh họa, phòng luyện tập
+app-v8.js    — phân tích ảnh, nội dung 13 bước, render minh họa, phòng luyện tập
 ```
 
 ## Giấy phép

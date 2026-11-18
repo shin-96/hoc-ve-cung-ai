@@ -182,7 +182,7 @@ function analyze(img){
     if(r>120&&g>70&&g<170&&b<g&&r>g*1.15&&r>b*1.4)skin++;
     if(r>g&&g>b&&r>100)warm++;}
   let guess="Tĩnh vật / vật thể", conf=52;
-  if(skin/n>0.06){guess="Chân dung / con người";conf=Math.min(88,55+Math.round(skin/n*220));}
+  if(skin/n>0.11){guess="Chân dung / con người";conf=Math.min(88,55+Math.round(skin/n*220));}
   else if(green/n>0.28){guess="Phong cảnh / thiên nhiên";conf=Math.min(90,55+Math.round(green/n*90));}
   else if(blue/n>0.30 && blueTop/Math.max(1,blue)>0.55){guess="Phong cảnh biển / bầu trời";conf=Math.min(88,52+Math.round(blue/n*85));}
   else if(edgeDensity>0.16){guess="Kiến trúc / đường phố (nhiều đường thẳng)";conf=64;}
@@ -509,20 +509,35 @@ $("#vRun").onclick=async()=>{
    ① Dựng khối (khung bao + trục + khối 3D cơ bản cho từng vật, nét chì xanh nhẹ)
    ② Đi nét chính bám theo khối   ③ Xóa đường dựng bằng tẩy dẻo (còn bóng ma 15%)
    ④ Hoàn thiện: nét đậm + chi tiết. Nét được truy vết từ chính ảnh người dùng. */
-function sobelBinary(gray,w,h,thr){
-  const bin=new Uint8Array(w*h);
+function sobelBinary(gray,w,h){
+  const mag=new Float32Array(w*h);
   for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const p=y*w+x;
     const gx=-gray[p-w-1]-2*gray[p-1]-gray[p+w-1]+gray[p-w+1]+2*gray[p+1]+gray[p+w+1];
     const gy=-gray[p-w-1]-2*gray[p-w]-gray[p-w+1]+gray[p+w-1]+2*gray[p+w]+gray[p+w+1];
-    if(Math.hypot(gx,gy)>thr) bin[p]=1;}
-  return bin;
+    mag[p]=Math.hypot(gx,gy);}
+  // Adaptive threshold: aim for ~7% edge density so soft photos still get complete outlines
+  const sample=[]; for(let i=0;i<w*h;i+=7) sample.push(mag[i]);
+  sample.sort((a,b)=>a-b);
+  let thr=sample[Math.floor(sample.length*0.93)]||110;
+  thr=Math.max(50,Math.min(230,thr));
+  let bin=new Uint8Array(w*h);
+  for(let p=0;p<w*h;p++) if(mag[p]>thr) bin[p]=1;
+  // Morphological closing (dilate then erode, 3x3) bridges 1-2px gaps in soft-photo edges
+  const dil=new Uint8Array(w*h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){ if(!bin[y*w+x])continue;
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ const nx=x+dx,ny=y+dy; if(nx>=0&&ny>=0&&nx<w&&ny<h) dil[ny*w+nx]=1; } }
+  const out=new Uint8Array(w*h);
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){ let ok=1;
+    for(let dy=-1;dy<=1&&ok;dy++)for(let dx=-1;dx<=1;dx++){ if(!dil[(y+dy)*w+x+dx]){ok=0;break;} }
+    out[y*w+x]=ok; }
+  return out;
 }
 function tracePaths(bin,w,h){
   const visited=new Uint8Array(w*h), paths=[];
   const DIRS=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
   for(let start=0;start<w*h;start++){
     if(!bin[start]||visited[start]) continue;
-    const path=[start]; visited[start]=1; let cur=start, dir=0, guard=0;
+    const path=[start]; visited[start]=1; let cur=start, dir=0, guard=0, jumps=0;
     while(guard++<6000){
       let moved=false;
       for(let s=0;s<8;s++){
@@ -531,6 +546,14 @@ function tracePaths(bin,w,h){
         if(nx<0||ny<0||nx>=w||ny>=h) continue;
         const np=ny*w+nx;
         if(bin[np]&&!visited[np]){ visited[np]=1; path.push(np); cur=np; dir=nd; moved=true; break; }
+      }
+      if(!moved && jumps<4){
+        // Gap bridging: hop to the nearest unvisited edge pixel within 3px and keep drawing the same stroke
+        const cx=cur%w, cy=Math.floor(cur/w); let best=-1, bd=1e9;
+        for(let dy=-3;dy<=3;dy++)for(let dx=-3;dx<=3;dx++){ const nx=cx+dx, ny=cy+dy;
+          if(nx<0||ny<0||nx>=w||ny>=h) continue; const np=ny*w+nx;
+          if(bin[np]&&!visited[np]){ const dd=dx*dx+dy*dy; if(dd<bd){bd=dd;best=np;} } }
+        if(best>=0){ visited[best]=1; path.push(best); cur=best; jumps++; moved=true; }
       }
       if(!moved) break;
     }
@@ -544,23 +567,25 @@ function tracePaths(bin,w,h){
   paths.sort((a,b)=>b.length-a.length);
   return paths;
 }
-const STB=$("#strokeBase"), SBX=STB.getContext("2d");
 const STC=$("#strokeCanvas"), STX=STC.getContext("2d"), SCC=$("#strokeCursor"), SCX=SCC.getContext("2d");
-const S4={A:[],B:[],D:[],fade:300,aEnd:0,bEnd:0,fEnd:0,total:0,t:0,playing:false,raf:null,fit:null,ready:false,stage:-1};
-const STYLE_A={color:"rgba(70,95,140,.62)",width:1.7};   // construction pencil (blue-grey, light)
-const STYLE_B={color:"rgba(97,85,71,.78)",width:1.8};    // main lines over the blocks
-const STYLE_D={color:"rgba(38,31,25,.95)",width:2.1};    // final dark lines + details
+const S4={A:[],B:[],D:[],total:0,u:0,playing:false,raf:null,fit:null,ready:false,stage:-1};
+/* Fixed teaching-time windows (share of the whole replay), independent of segment counts:
+   construction always gets a real, watchable share of the timeline. */
+const WIN={a:[0,0.22], b:[0.22,0.52], f:[0.52,0.62], d:[0.62,1]};
+const STYLE_A={color:"rgba(70,95,140,.62)",width:1.7};
+const STYLE_B={color:"rgba(97,85,71,.78)",width:1.8};
+const STYLE_D={color:"rgba(38,31,25,.95)",width:2.1};
 const STAGE_TIPS=[
  "① DỰNG KHỐI — Học: đo khung bao quanh chủ thể, kẻ trục chính, rồi ép MỖI vật về khối 3D gần nhất: hộp, trụ hoặc cầu (khung xanh xám). Nét ở bước này phải thật nhẹ — vì lát nữa ta sẽ xóa nó đi.",
  "② ĐI NÉT CHÍNH — Học: vẽ đường viền thật bám sát khối đã dựng. Khối cho bạn tỉ lệ và vị trí; nét chính cho hình dáng thật. Chưa thêm chi tiết, chưa nhấn đậm.",
- "③ XÓA ĐƯỜNG DỰNG — Học: dùng tẩy dẻo nhấc bớt chì: đường dựng không mất hẳn mà thành “bóng ma” ~15%, đủ để nét chính không lạc đường nhưng không còn tranh chấp với nét thật.",
+ "③ XÓA ĐƯỜNG DỰNG — Học: dùng tẩy dẻo nhấc bớt chì: đường dựng không mất hẳn mà thành “bóng ma” rất mờ ~10%, đủ để nét chính không lạc đường nhưng không còn tranh chấp với nét thật.",
  "④ HOÀN THIỆN — Học: đi lại toàn bộ nét chính bằng nét đậm dứt khoát, rồi mới thêm các nét chi tiết nhỏ và chất liệu. Thứ tự này — khối → nét → xóa → hoàn thiện — là xương sống của mọi bài vẽ đúng phương pháp."];
 function prepareStrokes(){
   if(!state.img||!state.analysis) return;
   $("#strokePhase").textContent="Đang dựng khối & truy vết nét…";
   const a=state.analysis;
   const {g,w,h}=grayArr(state.img,540);
-  const bin=sobelBinary(g,w,h,120);
+  const bin=sobelBinary(g,w,h);
   let paths=tracePaths(bin,w,h);
   let total=0; const kept=[];
   for(const p of paths){ if(total>42000) break; kept.push(p); total+=p.length; }
@@ -573,34 +598,53 @@ function prepareStrokes(){
   const rect=(x,y,w2,h2,out)=>segsOf([[x,y],[x+w2,y],[x+w2,y+h2],[x,y+h2],[x,y]],out);
   const ellipse=(cx,cy,rx,ry,out,n=44)=>{ const pts=[]; for(let i=0;i<=n;i++){const th=i/n*Math.PI*2; pts.push([cx+rx*Math.cos(th), cy+ry*Math.sin(th)]);} segsOf(pts,out); };
   const arc=(cx,cy,rx,ry,a0,a1,out,n=20)=>{ const pts=[]; for(let i=0;i<=n;i++){const th=a0+(a1-a0)*i/n; pts.push([cx+rx*Math.cos(th), cy+ry*Math.sin(th)]);} segsOf(pts,out); };
-  /* ---- Stage A: construction ---- */
   S4.A=[];
   const bx=X(a.bbox.x), by=Y(a.bbox.y), bw=a.bbox.w*fw, bh=a.bbox.h*fh;
-  rect(bx,by,bw,bh,S4.A);                                            // bounding box
-  for(let i=1;i<3;i++){                                              // thirds inside the box
+  rect(bx,by,bw,bh,S4.A);
+  for(let i=1;i<3;i++){
     segsOf([[bx+bw*i/3,by],[bx+bw*i/3,by+bh]],S4.A);
     segsOf([[bx,by+bh*i/3],[bx+bw,by+bh*i/3]],S4.A); }
-  const ccx=X(a.centroid.x), ccy=Y(a.centroid.y);                    // main axes through the centroid
+  const ccx=X(a.centroid.x), ccy=Y(a.centroid.y);
   segsOf([[ccx,by-bh*0.05],[ccx,by+bh*1.05]],S4.A);
   segsOf([[bx-bw*0.05,ccy],[bx+bw*1.05,ccy]],S4.A);
-  const comps=(a.components&&a.components.length)?a.components:[{x:a.bbox.x,y:a.bbox.y,w:a.bbox.w,h:a.bbox.h,kind:"box"}];
+  let comps=(a.components||[]).filter(c=>c.w<=0.8&&c.h<=0.85);
+  if(comps.length<2){
+    // Colour segmentation failed (typical for soft photos with busy backgrounds).
+    // Honest fallback construction for a full-frame subject: ONE overall mass fitted
+    // into the subject bbox + anchor masses at the strongest detail peaks (eyes,
+    // headband, hands, object corners) — the standard "big mass + landmarks" block-in.
+    comps=[{x:a.bbox.x+a.bbox.w*0.05, y:a.bbox.y+a.bbox.h*0.05, w:a.bbox.w*0.9, h:a.bbox.h*0.9, kind:"ellipse"}];
+    const cell=36, gw=Math.ceil(w/cell), gh=Math.ceil(h/cell), dens=new Float32Array(gw*gh);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){ if(bin[y*w+x]) dens[Math.floor(y/cell)*gw+Math.floor(x/cell)]++; }
+    for(let i=0;i<dens.length;i++) dens[i]/=cell*cell;
+    const order=[...dens.keys()].sort((p1,p2)=>dens[p2]-dens[p1]), peaks=[];
+    for(const ci of order){
+      if(dens[ci]<0.10||peaks.length>=4) break;
+      const cx=ci%gw, cy=Math.floor(ci/gw);
+      if(peaks.some(pk=>Math.abs(pk[0]-cx)<3&&Math.abs(pk[1]-cy)<3)) continue;
+      peaks.push([cx,cy]);
+    }
+    for(const [pcx,pcy] of peaks){
+      const cxN=(pcx+0.5)*cell/w, cyN=(pcy+0.5)*cell/h;
+      const rw=a.bbox.w*0.17, rh=a.bbox.h*0.17;
+      comps.push({x:Math.max(0,cxN-rw/2), y:Math.max(0,cyN-rh/2), w:rw, h:rh, kind:"ellipse"});
+    }
+  }
   S4.compKinds=comps.map(c=>c.kind);
   for(const c of comps){
     const x=X(c.x), y=Y(c.y), w2=c.w*fw, h2=c.h*fh, cx=x+w2/2, cy=y+h2/2;
     if(c.kind==="ellipse"){ ellipse(cx,cy,w2/2,h2/2,S4.A); arc(cx,cy,w2/2,h2*0.28,0,Math.PI,S4.A); }
-    else if(c.kind==="cylinder"){ segsOf([[x,y+ h2*0.06],[x,y+h2]],S4.A); segsOf([[x+w2,y+h2*0.06],[x+w2,y+h2]],S4.A);
+    else if(c.kind==="cylinder"){ segsOf([[x,y+h2*0.06],[x,y+h2]],S4.A); segsOf([[x+w2,y+h2*0.06],[x+w2,y+h2]],S4.A);
       ellipse(cx,y+h2*0.06,w2/2,h2*0.06,S4.A,32); arc(cx,y+h2,w2/2,h2*0.06,0,Math.PI,S4.A); }
-    else { rect(x,y,w2,h2,S4.A); segsOf([[x,y+h2*0.18],[x+w2,y+h2*0.18]],S4.A); }  // box + top-face edge
+    else { rect(x,y,w2,h2,S4.A); segsOf([[x,y+h2*0.18],[x+w2,y+h2*0.18]],S4.A); }
   }
-  /* ---- Stage B: main contour lines (longest ~55% of points) ---- */
   S4.B=[]; let acc=0;
   for(const p of paths){ if(acc>total*0.55) break; acc+=p.length;
     segsOf(p.map(pt=>[X(pt[0]),Y(pt[1])]),S4.B); }
-  /* ---- Stage D: every line, dark, incl. short detail strokes ---- */
   S4.D=[];
   for(const p of paths) segsOf(p.map(pt=>[X(pt[0]),Y(pt[1])]),S4.D);
-  S4.aEnd=S4.A.length; S4.bEnd=S4.aEnd+S4.B.length; S4.fEnd=S4.bEnd+S4.fade; S4.total=S4.fEnd+S4.D.length;
-  S4.t=0; S4.playing=false; S4.ready=true; S4.stage=-1;
+  S4.total=S4.A.length+S4.B.length+S4.D.length;
+  S4.u=0; S4.playing=false; S4.ready=true; S4.stage=-1;
   $("#strokePlay").textContent="▶ Vẽ theo 4 giai đoạn";
   renderS4(0);
 }
@@ -611,34 +655,33 @@ function paintSegList(ctx,list,from,to,style){
   for(let i=from;i<to;i++){ const sg=list[i]; ctx.moveTo(sg.x1,sg.y1); ctx.lineTo(sg.x2,sg.y2); }
   ctx.stroke();
 }
-function stageOf(t){
-  if(t<S4.aEnd) return 0; if(t<S4.bEnd) return 1; if(t<S4.fEnd) return 2; if(t<S4.total) return 3; return 4;
+const clamp01=v=>Math.max(0,Math.min(1,v));
+function stageOf(u){
+  if(u<WIN.a[1]) return 0; if(u<WIN.b[1]) return 1; if(u<WIN.f[1]) return 2; if(u<1) return 3; return 4;
 }
-function renderS4(t){
-  S4.t=t;
-  SBX.clearRect(0,0,STB.width,STB.height); STX.clearRect(0,0,STC.width,STC.height);
-  paintSegList(SBX,S4.A,0,Math.min(Math.floor(t),S4.aEnd),STYLE_A);
-  let op=1;
-  if(t>=S4.fEnd) op=0.15; else if(t>S4.bEnd) op=1-0.85*((t-S4.bEnd)/S4.fade);
-  STB.style.opacity=op.toFixed(3);
-  paintSegList(STX,S4.B,0,Math.max(0,Math.min(Math.floor(t)-S4.aEnd,S4.B.length)),STYLE_B);
-  paintSegList(STX,S4.D,0,Math.max(0,Math.min(Math.floor(t)-S4.fEnd,S4.D.length)),STYLE_D);
-  const st=stageOf(t), pct=S4.total?Math.round(t/S4.total*100):0;
-  $("#strokeScrub").value=S4.total?Math.round(t/S4.total*1000):0;
-  $("#strokeStats").textContent=`${pct}% · ${S4.A.length+S4.B.length+S4.D.length} đoạn nét`;
+function renderS4(u){
+  S4.u=u;
+  const aN=Math.floor(S4.A.length*clamp01((u-WIN.a[0])/(WIN.a[1]-WIN.a[0])));
+  const bN=Math.floor(S4.B.length*clamp01((u-WIN.b[0])/(WIN.b[1]-WIN.b[0])));
+  const dN=Math.floor(S4.D.length*clamp01((u-WIN.d[0])/(WIN.d[1]-WIN.d[0])));
+  const alphaA = u<=WIN.f[0] ? 1 : (u>=WIN.f[1] ? 0.10 : 1-0.90*((u-WIN.f[0])/(WIN.f[1]-WIN.f[0])));
+  STX.fillStyle="#f7f3ea"; STX.fillRect(0,0,STC.width,STC.height);
+  STX.save(); STX.globalAlpha=alphaA; paintSegList(STX,S4.A,0,aN,STYLE_A); STX.restore();
+  paintSegList(STX,S4.B,0,bN,STYLE_B);
+  paintSegList(STX,S4.D,0,dN,STYLE_D);
+  const st=stageOf(u), pct=Math.round(u*100);
+  $("#strokeScrub").value=Math.round(u*1000);
+  $("#strokeStats").textContent=`${pct}% · ${S4.total} đoạn nét`;
   const chip=$("#strokePhase");
   if(!S4.ready) chip.textContent="Đang chuẩn bị…";
   else if(st===4) chip.textContent="✅ Hoàn thiện xong — bản nét cuối: khối đã xóa mờ, nét chính + chi tiết đã khóa";
   else chip.textContent=["📐 Giai đoạn 1/4 — Dựng khối","✏️ Giai đoạn 2/4 — Đi nét chính","🧽 Giai đoạn 3/4 — Xóa đường dựng (tẩy dẻo)","🖊️ Giai đoạn 4/4 — Hoàn thiện nét & chi tiết"][st];
   if(st!==S4.stage){ S4.stage=st; $("#strokeTip").textContent = st===4 ? STAGE_TIPS[3] : (STAGE_TIPS[st]||""); }
-  // pencil position: end of the segment currently being drawn
   let cur=null;
-  if(t>0&&t<S4.total){
-    if(t<S4.aEnd) cur=S4.A[Math.floor(t)];
-    else if(t<S4.bEnd) cur=S4.B[Math.floor(t)-S4.aEnd];
-    else if(t>=S4.fEnd) cur=S4.D[Math.floor(t)-S4.fEnd];
+  if(S4.playing&&u>0&&u<1){
+    if(st===0&&aN>0) cur=S4.A[aN-1]; else if(st===1&&bN>0) cur=S4.B[bN-1]; else if(st===3&&dN>0) cur=S4.D[dN-1];
   }
-  if(cur&&S4.playing) drawPencil(cur.x2,cur.y2); else SCX.clearRect(0,0,SCC.width,SCC.height);
+  if(cur) drawPencil(cur.x2,cur.y2); else SCX.clearRect(0,0,SCC.width,SCC.height);
 }
 function drawPencil(x,y){
   SCX.clearRect(0,0,SCC.width,SCC.height);
@@ -649,26 +692,25 @@ function drawPencil(x,y){
 function strokeTick(){
   if(!S4.playing) return;
   const speed=(+$("#strokeSpeed").value)/100;
-  const next=Math.min(S4.total, S4.t + S4.total/(30*60)*speed);
-  renderS4(next);
-  if(S4.t>=S4.total){ S4.playing=false; $("#strokePlay").textContent="▶ Vẽ lại"; SCX.clearRect(0,0,SCC.width,SCC.height); return; }
+  renderS4(Math.min(1, S4.u + speed/(30*60)));
+  if(S4.u>=1){ S4.playing=false; $("#strokePlay").textContent="▶ Vẽ lại"; SCX.clearRect(0,0,SCC.width,SCC.height); return; }
   S4.raf=requestAnimationFrame(strokeTick);
 }
 $("#strokePlay").onclick=()=>{
   if(!S4.ready) return;
-  if(S4.playing){ S4.playing=false; cancelAnimationFrame(S4.raf); $("#strokePlay").textContent="▶ Vẽ tiếp"; renderS4(S4.t); return; }
-  if(S4.t>=S4.total) renderS4(0);
+  if(S4.playing){ S4.playing=false; cancelAnimationFrame(S4.raf); $("#strokePlay").textContent="▶ Vẽ tiếp"; renderS4(S4.u); return; }
+  if(S4.u>=1) renderS4(0);
   S4.playing=true; $("#strokePlay").textContent="⏸ Tạm dừng"; S4.raf=requestAnimationFrame(strokeTick);
 };
 $("#strokeRestart").onclick=()=>{ if(!S4.ready)return; S4.playing=false; cancelAnimationFrame(S4.raf); renderS4(0); $("#strokePlay").textContent="▶ Vẽ theo 4 giai đoạn"; };
 $("#strokeSpeed").oninput=e=>{ $("#strokeSpeedVal").textContent=((+e.target.value)/100).toFixed(2).replace(/\.?0+$/,"")+"×"; };
 $("#strokeScrub").oninput=e=>{ if(!S4.ready)return; S4.playing=false; cancelAnimationFrame(S4.raf);
-  const target=Math.round(S4.total*(+e.target.value)/1000);
-  $("#strokePlay").textContent = target>=S4.total ? "▶ Vẽ lại" : "▶ Vẽ tiếp"; renderS4(target); };
-$("#strokePencil").onchange=()=>renderS4(S4.t);
+  const u=(+e.target.value)/1000;
+  $("#strokePlay").textContent = u>=1 ? "▶ Vẽ lại" : "▶ Vẽ tiếp"; renderS4(u); };
+$("#strokePencil").onchange=()=>renderS4(S4.u);
 $("#strokeDownload").onclick=()=>{ if(!S4.ready)return;
   const c=makeCanvas(STC.width,STC.height), x=c.getContext("2d");
   x.fillStyle="#f7f3ea"; x.fillRect(0,0,c.width,c.height);
-  x.save(); x.globalAlpha=0.15; paintSegList(x,S4.A,0,S4.A.length,STYLE_A); x.restore();
+  x.save(); x.globalAlpha=0.10; paintSegList(x,S4.A,0,S4.A.length,STYLE_A); x.restore();
   paintSegList(x,S4.D,0,S4.D.length,STYLE_D);
   const a=document.createElement("a"); a.download="ban-net-4-giai-doan.png"; a.href=c.toDataURL("image/png"); a.click(); };
