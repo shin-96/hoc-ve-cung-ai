@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Học Vẽ Cùng AI — Phân tích ảnh & dạy vẽ từng bước siêu chi tiết</title>
+<meta name="description" content="Tải ảnh lên, AI phân tích bố cục, tỉ lệ, ánh sáng, màu sắc rồi hướng dẫn vẽ lại từng bước: dựng khối, tẩy đường dựng, nét chính, sắc độ, đổ bóng, lên màu và hoàn thiện.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✏️</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#top"><span class="brand-mark">✏️</span> Học Vẽ <em>Cùng AI</em></a>
+  <nav>
+    <a href="#phan-tich">Phân tích</a><a href="#lo-trinh">Lộ trình 13 bước</a>
+    <a href="#ve-tung-buoc">Vẽ từng bước</a><a href="#luyen-tap">Phòng luyện tập</a>
+  </nav>
+  <a class="btn btn-small btn-primary" href="#tai-anh">Tải ảnh lên</a>
+</header>
+
+<main id="top">
+  <!-- HERO + UPLOAD -->
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">AI DRAWING MENTOR · TỪ NÉT ĐẦU TIÊN ĐẾN TÁC PHẨM</p>
+      <h1>Nhìn một bức ảnh.<br><span>Vẽ lại nó</span> như họa sĩ.</h1>
+      <p class="lead">Tải bất kỳ ảnh nào lên — chân dung, phong cảnh, tĩnh vật, kiến trúc. AI sẽ <strong>phân tích thật ngay trên trình duyệt</strong>: bố cục, tỉ lệ chủ thể, hướng sáng, độ phức tạp, bảng màu… rồi biến nó thành <strong>bài học 13 bước siêu chi tiết</strong>, kèm hình minh họa vẽ lại chính ảnh của bạn ở từng bước: dựng khối → tẩy đường dựng → nét chính → sắc độ → bóng → màu → hoàn thiện.</p>
+      <div class="hero-points">
+        <div>🎯 <b>Phân tích thật</b><small>Đo tỉ lệ, sáng, màu bằng xử lý ảnh — không bịa số</small></div>
+        <div>🧱 <b>Dựng khối rồi tẩy</b><small>Đúng quy trình atelier cổ điển, giải thích từng lần tẩy</small></div>
+        <div>🖼️ <b>Minh họa từng bước</b><small>Mỗi bước là một bản vẽ sinh ra từ chính ảnh bạn tải</small></div>
+      </div>
+    </div>
+
+    <div class="uploader card" id="tai-anh">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Tải ảnh lên để phân tích">
+        <div class="dz-icon">🖼️</div>
+        <h2>Kéo & thả ảnh vào đây</h2>
+        <p>hoặc bấm để chọn ảnh · JPG / PNG / WebP · ảnh chỉ xử lý trên máy bạn, không gửi đi đâu</p>
+        <input type="file" id="fileInput" accept="image/*" hidden>
+        <div class="dz-actions">
+          <button class="btn btn-primary" id="pickBtn" type="button">📤 Chọn ảnh của tôi</button>
+          <button class="btn btn-ghost" id="sampleBtn" type="button">🎨 Dùng ảnh mẫu (tĩnh vật)</button>
+        </div>
+      </div>
+      <figure class="preview-wrap" id="previewWrap" hidden>
+        <img id="previewImg" alt="Ảnh bạn vừa tải lên">
+        <figcaption><span id="fileMeta">—</span>
+          <button class="btn btn-ghost btn-small" id="changeBtn" type="button">↺ Đổi ảnh khác</button>
+        </figcaption>
+      </figure>
+      <div class="progress-line" id="analyzeProgress" hidden><i></i><span>AI đang đo ảnh, tìm chủ thể, trích màu…</span></div>
+    </div>
+  </section>
+
+  <!-- ANALYSIS -->
+  <section id="phan-tich" class="section" hidden>
+    <div class="section-head"><p class="eyebrow">BƯỚC 0 · PHÂN TÍCH ẢNH</p>
+      <h2>AI nhìn thấy gì trong ảnh của bạn?</h2>
+      <p id="analysisSummary" class="section-sub"></p></div>
+    <div class="analysis-grid">
+      <div class="card stat-grid" id="statGrid"></div>
+      <div class="card">
+        <h3>🎨 Bảng màu chủ đạo (trích từ ảnh thật)</h3>
+        <div class="palette" id="palette"></div>
+        <p class="hint" id="paletteNote"></p>
+        <h3 style="margin-top:18px">🧭 Sơ đồ bố cục</h3>
+        <canvas id="compCanvas" width="520" height="360"></canvas>
+        <p class="hint">Khung đỏ = khung bao chủ thể AI đo được · chấm vàng = trọng tâm thị giác · lưới = quy tắc 1/3.</p>
+      </div>
+      <div class="card ai-notes"><h3>🤖 Nhận định của AI — cá nhân hóa cho ảnh này</h3><ul id="aiNotes"></ul>
+        <div class="verdict" id="verdict"></div></div>
+    </div>
+  </section>
+
+  <!-- ROADMAP -->
+  <section id="lo-trinh" class="section" hidden>
+    <div class="section-head"><p class="eyebrow">LỘ TRÌNH · ĐƠN GIẢN → NÂNG CAO</p>
+      <h2>13 bước vẽ lại bức ảnh này</h2>
+      <p class="section-sub">Bấm vào từng bước để xem hướng dẫn siêu chi tiết + hình minh họa. Thứ tự là bắt buộc: đừng nhảy bước — đặc biệt đừng lên chi tiết khi khối còn sai, và đừng quên <b>bước tẩy đường dựng</b>, nơi 90% người mới bỏ qua.</p></div>
+    <div class="roadmap" id="roadmap"></div>
+  </section>
+
+  <!-- STEP VIEWER -->
+  <section id="ve-tung-buoc" class="section" hidden>
+    <div class="section-head"><p class="eyebrow">VẼ TỪNG BƯỚC · MINH HỌA TRỰC TIẾP</p>
+      <h2 id="stepTitle">Bước 1</h2><p class="section-sub" id="stepTagline"></p></div>
+    <div class="step-progress"><i id="stepProgressBar"></i><span id="stepProgressText"></span></div>
+    <div class="step-layout">
+      <div class="card canvas-card">
+        <div class="canvas-toolbar">
+          <button class="btn btn-ghost btn-small" id="prevStep" type="button">← Bước trước</button>
+          <button class="btn btn-primary btn-small" id="playSteps" type="button">▶ Trình chiếu từng bước</button>
+          <button class="btn btn-ghost btn-small" id="nextStep" type="button">Bước sau →</button>
+        </div>
+        <canvas id="stepCanvas" width="960" height="680"></canvas>
+        <div class="canvas-foot">
+          <label>So với ảnh gốc <input type="range" id="compareRange" min="0" max="100" value="0"> <span id="compareVal">0%</span></label>
+          <button class="btn btn-ghost btn-small" id="downloadStep" type="button">⬇ Tải hình bước này</button>
+        </div>
+        <p class="hint" id="stepCanvasCaption"></p>
+      </div>
+      <article class="card step-detail" id="stepDetail"></article>
+    </div>
+  </section>
+
+  <!-- PRACTICE -->
+  <section id="luyen-tap" class="section" hidden>
+    <div class="section-head"><p class="eyebrow">PHÒNG LUYỆN TẬP</p>
+      <h2>Tự tay vẽ theo — có tẩy thật</h2>
+      <p class="section-sub">Hình minh họa của bước đang chọn nằm mờ bên dưới làm “giấy can”. Bạn vẽ đè lên bằng bút chì, sai thì dùng <b>tẩy</b> — đúng tinh thần của bài học: dựng nháp, tẩy, vẽ lại cho đến khi đúng.</p></div>
+    <div class="card canvas-card">
+      <div class="canvas-toolbar wrap">
+        <button class="tool btn btn-ghost btn-small active" data-tool="pencil" type="button">✏️ Bút chì</button>
+        <button class="tool btn btn-ghost btn-small" data-tool="eraser" type="button">🧽 Tẩy</button>
+        <label>Cỡ nét <input type="range" id="brushSize" min="1" max="40" value="3"></label>
+        <label>Độ mờ hình mẫu <input type="range" id="ghostRange" min="0" max="80" value="35"></label>
+        <button class="btn btn-ghost btn-small" id="undoDraw" type="button">↩ Hoàn tác</button>
+        <button class="btn btn-ghost btn-small" id="clearDraw" type="button">🗑 Xóa hết</button>
+        <button class="btn btn-primary btn-small" id="downloadDraw" type="button">⬇ Tải bài vẽ của tôi</button>
+      </div>
+      <div class="practice-wrap"><canvas id="ghostCanvas" width="960" height="680"></canvas><canvas id="drawCanvas" width="960" height="680"></canvas></div>
+      <p class="hint">Mẹo: ở bước dựng khối hãy vẽ nét thật nhẹ (cỡ 2–3). Sang bước nét chính mới đè đậm. Tẩy ở đây hoạt động như tẩy dẻo: bấm nhiều lần để nhấc nét dần ở cỡ tẩy lớn + kéo chậm.</p>
+    </div>
+  </section>
+
+  <section class="section final-cta card">
+    <h2>Nguyên tắc vàng của cả khóa</h2>
+    <div class="principles">
+      <div><b>1 · Khối trước, chi tiết sau</b><p>Sai tỉ lệ ở bước khối thì chi tiết đẹp tới đâu cũng vô nghĩa. 70% thời gian của họa sĩ chuyên nghiệp nằm ở 4 bước đầu.</p></div>
+      <div><b>2 · Vẽ nhẹ để còn tẩy được</b><p>Mọi đường dựng đều là đường “mượn tạm”. Vẽ như viết bằng hơi thở — khi tẩy dẻo nhấc đi, giấy phải sạch như chưa từng có.</p></div>
+      <div><b>3 · Nheo mắt nhìn sắc độ</b><p>Nheo mắt để thế giới chỉ còn 3 mảng: sáng – trung – tối. Ai nắm được 3 mảng này là nắm được ánh sáng.</p></div>
+      <div><b>4 · Lật ngược bức vẽ</b><p>Lật ngang ảnh/tranh ở bước cuối: mọi lỗi tỉ lệ sẽ lộ ra ngay vì não không còn “tự sửa” theo thói quen.</p></div>
+    </div>
+  </section>
+</main>
+<footer><p>✏️ Học Vẽ Cùng AI — phân tích & minh họa chạy 100% trên trình duyệt của bạn. Không máy chủ, không gửi ảnh đi đâu.</p>
+<p><a href="https://github.com/shin-96/hoc-ve-cung-ai" target="_blank" rel="noopener">GitHub: shin-96/hoc-ve-cung-ai</a></p></footer>
+<script src="app.js"></script>
+</body>
+</html>
