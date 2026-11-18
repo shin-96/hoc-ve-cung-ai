@@ -244,7 +244,7 @@ function renderStep(idx){
 
 /* ---------------- GIAO DIỆN ---------------- */
 function showAnalysis(){
-  const a=state.analysis; $("#phan-tich").hidden=false; $("#lo-trinh").hidden=false; $("#ve-tung-buoc").hidden=false; $("#luyen-tap").hidden=false; $("#ai-vision").hidden=false;
+  const a=state.analysis; $("#phan-tich").hidden=false; $("#lo-trinh").hidden=false; $("#ve-tung-buoc").hidden=false; $("#luyen-tap").hidden=false; $("#ai-vision").hidden=false; $("#ve-that").hidden=false; setTimeout(prepareStrokes,60);
   $("#analysisSummary").textContent=`AI dự đoán chủ thể: ${a.guess} (độ tin cậy ${a.conf}%). Mọi con số dưới đây được đo trực tiếp từ ${a.w}×${a.h}px của ảnh bạn tải — hãy dùng chúng làm 'đề bài' cho 13 bước vẽ.`;
   const stats=[
     ["Kích thước gốc",`${a.w} × ${a.h} px`,`Tỉ lệ khung ${a.ratio.toFixed(2)} : 1 — ${a.orientation}. Hãy cắt giấy đúng tỉ lệ này, đừng vẽ trên giấy tỉ lệ khác rồi cố nhét vào.`],
@@ -383,7 +383,9 @@ const VPRESETS={
   openai:{endpoint:"https://api.openai.com/v1",model:"gpt-4o-mini"},
   oxion:{endpoint:"https://oxionai.com/v1",model:""},
   intern:{endpoint:"https://discovery-api.intern-ai.org.cn/v1",model:"deepseek-v4-flash-vision"},
-  gemini:{endpoint:"https://generativelanguage.googleapis.com/v1beta/openai/",model:"gemini-2.0-flash"},
+  gemini:{endpoint:"https://generativelanguage.googleapis.com/v1beta/openai/",model:"gemini-2.5-flash"},
+  openrouter:{endpoint:"https://openrouter.ai/api/v1",model:"google/gemma-4-31b-it:free"},
+  groq:{endpoint:"https://api.groq.com/openai/v1",model:"qwen/qwen3.8-27b"},
   xingchi:{endpoint:"https://api.xingchiapi.com/v1",model:"gpt-6.1-sol"},
   custom:{endpoint:"",model:""}
 };
@@ -394,7 +396,7 @@ function visionAdviceHTML(i){
 }
 function vCfg(){return{preset:$("#vPreset").value,endpoint:$("#vEndpoint").value.trim().replace(/\/+$/,""),model:$("#vModel").value.trim(),key:$("#vKey").value.trim(),remember:$("#vRemember").checked};}
 function vFill(cfg){ if(!cfg)return; $("#vPreset").value=cfg.preset||"openai"; $("#vEndpoint").value=cfg.endpoint||""; $("#vModel").value=cfg.model||""; $("#vRemember").checked=!!cfg.remember; if(cfg.key)$("#vKey").value=cfg.key; }
-try{ const saved=JSON.parse(localStorage.getItem("hocve_vision_cfg")||"null"); if(saved) vFill(saved); else { const p=VPRESETS.openai; $("#vEndpoint").value=p.endpoint; $("#vModel").value=p.model; } }catch(e){}
+try{ const saved=JSON.parse(localStorage.getItem("hocve_vision_cfg")||"null"); if(saved) vFill(saved); else { const p=VPRESETS.gemini; $("#vPreset").value="gemini"; $("#vEndpoint").value=p.endpoint; $("#vModel").value=p.model; } }catch(e){}
 $("#vPreset").onchange=e=>{const p=VPRESETS[e.target.value]; if(p){ if(p.endpoint)$("#vEndpoint").value=p.endpoint; if(p.model)$("#vModel").value=p.model; if(e.target.value==="xingchi")$("#vStatus").textContent="⚠️ XingChi: đã kiểm chứng bằng key thật — key hợp lệ và tài khoản chỉ có model gpt-6.1-sol, NHƯNG XingChi chặn gọi API từ trình duyệt/script (lỗi 403 client_not_allowed): cổng này chỉ cho các app lập trình (DeepSeek Harness, Cursor, Cline…) gọi. Vì vậy phân tích vision trên web bằng XingChi sẽ bị chặn — hãy dùng OpenAI / Gemini / Oxion cho web, XingChi để dành cho Harness."; }};
 $("#vSave").onclick=()=>{const c=vCfg(); const store={preset:c.preset,endpoint:c.endpoint,model:c.model,remember:c.remember}; if(c.remember&&c.key)store.key=c.key;
   try{localStorage.setItem("hocve_vision_cfg",JSON.stringify(store));}catch(e){}
@@ -482,3 +484,129 @@ $("#vRun").onclick=async()=>{
   }catch(e){ $("#vStatus").textContent="❌ Phân tích sâu thất bại: "+e.message; }
   finally{ $("#vProgress").hidden=true; }
 };
+
+/* ---------------- VẼ THẬT TỪNG NÉT (stroke-by-stroke) ----------------
+   Truy vết đường nét từ ảnh thật của người dùng rồi phát lại quá trình vẽ:
+   giai đoạn 1 = nét dựng nhẹ (các nét dài nhất), giai đoạn 2 = nét chính đậm. */
+function sobelBinary(gray,w,h,thr){
+  const bin=new Uint8Array(w*h);
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const p=y*w+x;
+    const gx=-gray[p-w-1]-2*gray[p-1]-gray[p+w-1]+gray[p-w+1]+2*gray[p+1]+gray[p+w+1];
+    const gy=-gray[p-w-1]-2*gray[p-w]-gray[p-w+1]+gray[p+w-1]+2*gray[p+w]+gray[p+w+1];
+    if(Math.hypot(gx,gy)>thr) bin[p]=1;}
+  return bin;
+}
+function tracePaths(bin,w,h){
+  const visited=new Uint8Array(w*h), paths=[];
+  const DIRS=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+  for(let start=0;start<w*h;start++){
+    if(!bin[start]||visited[start]) continue;
+    const path=[start]; visited[start]=1; let cur=start, dir=0, guard=0;
+    while(guard++<6000){
+      let moved=false;
+      for(let s=0;s<8;s++){
+        const nd=(dir+7+s)%8; // search order: back-left first, then sweep around (contour following)
+        const nx=(cur%w)+DIRS[nd][0], ny=Math.floor(cur/w)+DIRS[nd][1];
+        if(nx<0||ny<0||nx>=w||ny>=h) continue;
+        const np=ny*w+nx;
+        if(bin[np]&&!visited[np]){ visited[np]=1; path.push(np); cur=np; dir=nd; moved=true; break; }
+      }
+      if(!moved) break;
+    }
+    if(path.length>=6){
+      const pts=[];
+      for(let i=0;i<path.length;i+=2) pts.push([ (path[i]%w)/w, Math.floor(path[i]/w)/h ]);
+      const last=path[path.length-1]; pts.push([ (last%w)/w, Math.floor(last/w)/h ]);
+      paths.push(pts);
+    }
+  }
+  paths.sort((a,b)=>b.length-a.length);
+  return paths;
+}
+const STC=$("#strokeCanvas"), STX=STC.getContext("2d"), SCC=$("#strokeCursor"), SCX=SCC.getContext("2d");
+const stroke={segs:[],phase1End:0,drawn:0,playing:false,raf:null,fit:null,ready:false};
+function prepareStrokes(){
+  if(!state.img) return;
+  $("#strokePhase").textContent="Đang truy vết nét từ ảnh…";
+  const {g,w,h}=grayArr(state.img,540);
+  const bin=sobelBinary(g,w,h,120);
+  let paths=tracePaths(bin,w,h);
+  // Cap total points so the replay stays watchable
+  let total=0; const kept=[];
+  for(const p of paths){ if(total>42000) break; kept.push(p); total+=p.length; }
+  paths=kept;
+  // Fit rect identical to the other canvases
+  const W=STC.width,H=STC.height, iw=state.img.naturalWidth||state.img.width, ih=state.img.naturalHeight||state.img.height;
+  const s=Math.min(W/iw,H/ih), fw=iw*s, fh=ih*s, fx=(W-fw)/2, fy=(H-fh)/2;
+  stroke.fit={x:fx,y:fy,w:fw,h:fh};
+  const toXY=pt=>[fx+pt[0]*fw, fy+pt[1]*fh];
+  stroke.segs=[];
+  const pushPath=(p,style)=>{ for(let i=1;i<p.length;i++){ const a=toXY(p[i-1]), b=toXY(p[i]); stroke.segs.push({x1:a[0],y1:a[1],x2:b[0],y2:b[1],style}); } };
+  // Phase 1: construction — the longest paths covering ~38% of all points
+  let acc=0; const p1=[];
+  for(const p of paths){ if(acc>total*0.38) break; p1.push(p); acc+=p.length; }
+  p1.forEach(p=>pushPath(p,0));
+  stroke.phase1End=stroke.segs.length;
+  // Phase 2: main lines — every path, longest first then the rest top-to-bottom
+  paths.forEach(p=>pushPath(p,1));
+  stroke.drawn=0; stroke.ready=true; stroke.playing=false;
+  $("#strokePlay").textContent="▶ Vẽ từng nét";
+  $("#strokePhase").textContent=stroke.segs.length?`Sẵn sàng: ${paths.length} nét · bấm ▶ để xem vẽ`:"Không tìm thấy nét rõ trong ảnh này — hãy thử ảnh có đường nét rõ hơn";
+  $("#strokeStats").textContent=`${paths.length} nét · ${stroke.segs.length.toLocaleString("vi-VN")} đoạn`;
+  drawStrokeUpTo(0);
+}
+function paintSegs(from,to){
+  let curStyle=-1;
+  STX.lineCap="round"; STX.lineJoin="round"; STX.beginPath();
+  for(let i=from;i<to;i++){ const sg=stroke.segs[i];
+    if(sg.style!==curStyle){ STX.stroke(); curStyle=sg.style;
+      if(curStyle===0){ STX.strokeStyle="rgba(105,92,78,.5)"; STX.lineWidth=1.6; } else { STX.strokeStyle="rgba(43,36,30,.92)"; STX.lineWidth=2.1; }
+      STX.beginPath(); }
+    STX.moveTo(sg.x1,sg.y1); STX.lineTo(sg.x2,sg.y2);
+  }
+  STX.stroke();
+}
+function drawStrokeUpTo(n){
+  STX.fillStyle="#f7f3ea"; STX.fillRect(0,0,STC.width,STC.height);
+  if(stroke.fit){ STX.strokeStyle="rgba(120,105,85,.35)"; STX.lineWidth=1; STX.strokeRect(stroke.fit.x,stroke.fit.y,stroke.fit.w,stroke.fit.h); }
+  paintSegs(0,n); stroke.drawn=n; updateStrokeUI();
+}
+function updateStrokeUI(){
+  const n=stroke.segs.length, d=Math.floor(stroke.drawn);
+  const pct=n?Math.round(d/n*100):0;
+  $("#strokeScrub").value=n?Math.round(d/n*1000):0;
+  $("#strokeStats").textContent=`${d.toLocaleString("vi-VN")} / ${n.toLocaleString("vi-VN")} đoạn · ${pct}%`;
+  $("#strokePhase").textContent = !stroke.ready ? "Đang chuẩn bị nét…" :
+    d>=n && n>0 ? "✅ Vẽ xong — đây là bản nét hoàn chỉnh từ ảnh của bạn" :
+    d<stroke.phase1End ? "✏️ Giai đoạn 1 — nét dựng nhẹ (khối & đường dài)" : "🖊️ Giai đoạn 2 — đi nét chính đậm dần";
+  if(d>0&&d<=stroke.segs.length){ const sg=stroke.segs[Math.min(d,stroke.segs.length)-1]; drawPencil(sg.x2,sg.y2); }
+  else SCX.clearRect(0,0,SCC.width,SCC.height);
+}
+function drawPencil(x,y){
+  SCX.clearRect(0,0,SCC.width,SCC.height);
+  if(!$("#strokePencil").checked) return;
+  SCX.font="26px sans-serif"; SCX.save(); SCX.translate(x,y); SCX.rotate(-0.5); SCX.fillText("✏️",-4,-16); SCX.restore();
+  SCX.fillStyle="rgba(229,49,112,.9)"; SCX.beginPath(); SCX.arc(x,y,3.2,0,7); SCX.fill();
+}
+function strokeTick(){
+  if(!stroke.playing) return;
+  const speed=(+$("#strokeSpeed").value)/100;
+  const perFrame=Math.max(2, stroke.segs.length/(22*60)*speed);
+  const next=Math.min(stroke.segs.length, stroke.drawn+perFrame);
+  paintSegs(Math.floor(stroke.drawn), Math.floor(next));
+  stroke.drawn=next; updateStrokeUI();
+  if(stroke.drawn>=stroke.segs.length){ stroke.playing=false; $("#strokePlay").textContent="▶ Vẽ lại"; SCX.clearRect(0,0,SCC.width,SCC.height); return; }
+  stroke.raf=requestAnimationFrame(strokeTick);
+}
+$("#strokePlay").onclick=()=>{
+  if(!stroke.ready) return;
+  if(stroke.playing){ stroke.playing=false; cancelAnimationFrame(stroke.raf); $("#strokePlay").textContent="▶ Vẽ tiếp"; return; }
+  if(stroke.drawn>=stroke.segs.length) drawStrokeUpTo(0);
+  stroke.playing=true; $("#strokePlay").textContent="⏸ Tạm dừng"; stroke.raf=requestAnimationFrame(strokeTick);
+};
+$("#strokeRestart").onclick=()=>{ if(!stroke.ready)return; stroke.playing=false; cancelAnimationFrame(stroke.raf); drawStrokeUpTo(0); $("#strokePlay").textContent="▶ Vẽ từng nét"; };
+$("#strokeSpeed").oninput=e=>{ $("#strokeSpeedVal").textContent=((+e.target.value)/100).toFixed(2).replace(/\.?0+$/,"")+"×"; };
+$("#strokeScrub").oninput=e=>{ if(!stroke.ready)return; stroke.playing=false; cancelAnimationFrame(stroke.raf); $("#strokePlay").textContent="▶ Vẽ tiếp"; drawStrokeUpTo(Math.round(stroke.segs.length*(+e.target.value)/1000)); };
+$("#strokePencil").onchange=()=>updateStrokeUI();
+$("#strokeDownload").onclick=()=>{ if(!stroke.ready)return; const keep=stroke.drawn; drawStrokeUpTo(stroke.segs.length);
+  const a=document.createElement("a"); a.download="ban-net-hoan-chinh.png"; a.href=STC.toDataURL("image/png"); a.click(); drawStrokeUpTo(keep); };

@@ -64,3 +64,6 @@ footer{text-align:center;color:var(--muted);padding:34px 20px;font-size:13.5px;l
 .subject-chip{display:inline-block;background:var(--card2);border:1px solid var(--line);border-radius:99px;padding:5px 12px;font-size:12.5px;margin:3px 4px 3px 0;color:var(--text)}
 .vision-advice{background:rgba(255,137,6,.1);border:1px solid rgba(255,137,6,.45);border-radius:12px;padding:12px 14px;font-size:14.5px;line-height:1.7;color:#ffe1bd}
 @media(max-width:980px){.vision-grid{grid-template-columns:1fr}}
+
+#strokeCursor{position:absolute;inset:0;pointer-events:none;background:transparent!important}
+#strokeCanvas{background:#f7f3ea}

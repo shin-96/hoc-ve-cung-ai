@@ -15,7 +15,7 @@
   <a class="brand" href="#top"><span class="brand-mark">✏️</span> Học Vẽ <em>Cùng AI</em></a>
   <nav>
     <a href="#phan-tich">Phân tích</a><a href="#ai-vision">AI Vision</a><a href="#lo-trinh">Lộ trình 13 bước</a>
-    <a href="#ve-tung-buoc">Vẽ từng bước</a><a href="#luyen-tap">Phòng luyện tập</a>
+    <a href="#ve-tung-buoc">Vẽ từng bước</a><a href="#ve-that">Vẽ từng nét</a><a href="#luyen-tap">Phòng luyện tập</a>
   </nav>
   <a class="btn btn-small btn-primary" href="#tai-anh">Tải ảnh lên</a>
 </header>
@@ -66,10 +66,12 @@
         <h3>🔑 Cài đặt API (OpenAI-compatible)</h3>
         <label class="fld">Nhà cung cấp
           <select id="vPreset">
+            <option value="gemini">🆓 Google Gemini — MIỄN PHÍ, không cần thẻ (khuyên dùng)</option>
+            <option value="openrouter">🆓 OpenRouter — các model :free miễn phí</option>
+            <option value="groq">🆓 Groq — free tier</option>
             <option value="openai">OpenAI — gpt-4o-mini (vision)</option>
             <option value="oxion">Oxion — cổng của bạn (oxionai.com)</option>
             <option value="intern">Intern InkStone — deepseek-v4-flash-vision</option>
-            <option value="gemini">Google Gemini — qua endpoint OpenAI-compatible</option>
             <option value="xingchi">XingChi — cổng của bạn</option>
             <option value="custom">Tùy chỉnh…</option>
           </select></label>
@@ -82,6 +84,14 @@
           <button class="btn btn-ghost btn-small" id="vTest" type="button">🔌 Kiểm tra kết nối</button>
         </div>
         <p class="hint" id="vStatus">Chưa kiểm tra kết nối.</p>
+        <div class="okbox" style="margin-top:12px"><b>🆓 Lấy key Gemini MIỄN PHÍ trong ~1 phút (không cần thẻ):</b>
+          <ol style="margin:8px 0 0;padding-left:19px;line-height:1.75">
+            <li>Mở <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent)">aistudio.google.com/apikey</a> và đăng nhập bằng tài khoản Google.</li>
+            <li>Bấm <b>Create API key</b> → copy key (dạng <code>AIza…</code>).</li>
+            <li>Quay lại đây: chọn preset <b>Google Gemini</b>, dán key vào ô API Key, bấm <b>Lưu cài đặt</b> rồi <b>Kiểm tra kết nối</b>.</li>
+            <li>Bấm <b>Phân tích sâu bằng AI Vision</b> ở thẻ bên cạnh. Gói free có giới hạn số lượt/ngày — đủ cho nhu cầu học vẽ cá nhân.</li>
+          </ol>
+          <p style="margin:8px 0 0">Không muốn dùng Google? Chọn preset <b>OpenRouter</b> (key free tại openrouter.ai/keys, model <code>google/gemma-4-31b-it:free</code>, giới hạn ~50 lượt/ngày) hoặc <b>Groq</b> free tier.</p></div>
         <p class="hint">Mẹo theo từng cổng: <b>Oxion</b> — key dạng <code>cc_…</code>, Model ID phải chép đúng từ danh sách model của Oxion và chọn model có vision; lỗi 402 = hết hạn mức, 429 = rate limit. <b>XingChi GPT</b> — Base URL + model <code>gpt-6.1-sol</code> đã điền sẵn, nhưng lưu ý: XingChi chỉ cho app lập trình gọi API, trình duyệt sẽ bị chặn 403 (đã kiểm chứng). <b>Intern</b> — model vision đã kiểm chứng là <code>deepseek-v4-flash-vision</code>. <b>OpenAI/Gemini</b> — dùng model vision bất kỳ của hãng.</p>
       </div>
       <div class="card">
@@ -145,6 +155,30 @@
     </div>
   </section>
 
+
+  <!-- STROKE BY STROKE -->
+  <section id="ve-that" class="section" hidden>
+    <div class="section-head"><p class="eyebrow">VẼ THẬT TỪNG NÉT</p>
+      <h2>Xem bản vẽ được vẽ lại — từng đường một</h2>
+      <p class="section-sub">Không phải 13 thẻ bước tĩnh nữa: ở đây các đường nét được <b>truy vết trực tiếp từ ảnh của bạn</b> và vẽ lại theo đúng trình tự của một họa sĩ — <b>giai đoạn 1: nét dựng nhẹ</b> bằng các đường dài nhất, <b>giai đoạn 2: đi nét chính</b> đậm dần cho toàn bộ. Bấm phát và nhìn cây bút chạy.</p></div>
+    <div class="card canvas-card">
+      <div class="canvas-toolbar wrap">
+        <button class="btn btn-primary btn-small" id="strokePlay" type="button">▶ Vẽ từng nét</button>
+        <button class="btn btn-ghost btn-small" id="strokeRestart" type="button">↺ Vẽ lại từ đầu</button>
+        <label>Tốc độ <input type="range" id="strokeSpeed" min="25" max="400" value="100"> <span id="strokeSpeedVal">1×</span></label>
+        <label class="checkline" style="margin:0"><input type="checkbox" id="strokePencil" checked> <span>Hiện cây bút</span></label>
+        <span class="chip" id="strokePhase">Đang chuẩn bị nét…</span>
+        <span class="chip" id="strokeStats">—</span>
+      </div>
+      <div class="practice-wrap"><canvas id="strokeCanvas" width="960" height="680"></canvas><canvas id="strokeCursor" width="960" height="680"></canvas></div>
+      <div class="canvas-foot">
+        <label style="flex:1">Tiến độ <input type="range" id="strokeScrub" min="0" max="1000" value="0" style="width:55%"></label>
+        <button class="btn btn-ghost btn-small" id="strokeDownload" type="button">⬇ Tải bản nét hoàn chỉnh</button>
+      </div>
+      <p class="hint">Kéo thanh tiến độ để tua tới bất kỳ khoảnh khắc nào của quá trình vẽ. Số nét và thứ tự vẽ được tính từ chính ảnh bạn tải lên — ảnh càng nhiều chi tiết, bản vẽ càng lâu.</p>
+    </div>
+  </section>
+
   <!-- PRACTICE -->
   <section id="luyen-tap" class="section" hidden>
     <div class="section-head"><p class="eyebrow">PHÒNG LUYỆN TẬP</p>
@@ -177,6 +211,6 @@
 </main>
 <footer><p>✏️ Học Vẽ Cùng AI — phân tích & minh họa chạy 100% trên trình duyệt của bạn. Không máy chủ; mặc định không gửi ảnh đi đâu — chỉ khi bạn tự nối API Vision bằng key của mình và bấm phân tích sâu, bản thu nhỏ của ảnh mới được gửi tới nhà cung cấp đó.</p>
 <p><a href="https://github.com/shin-96/hoc-ve-cung-ai" target="_blank" rel="noopener">GitHub: shin-96/hoc-ve-cung-ai</a></p></footer>
-<script src="app-v4.js"></script>
+<script src="app-v5.js"></script>
 </body>
 </html>
