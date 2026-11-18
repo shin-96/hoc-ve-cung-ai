@@ -14,7 +14,7 @@
 <header class="topbar">
   <a class="brand" href="#top"><span class="brand-mark">✏️</span> Học Vẽ <em>Cùng AI</em></a>
   <nav>
-    <a href="#phan-tich">Phân tích</a><a href="#lo-trinh">Lộ trình 13 bước</a>
+    <a href="#phan-tich">Phân tích</a><a href="#ai-vision">AI Vision</a><a href="#lo-trinh">Lộ trình 13 bước</a>
     <a href="#ve-tung-buoc">Vẽ từng bước</a><a href="#luyen-tap">Phòng luyện tập</a>
   </nav>
   <a class="btn btn-small btn-primary" href="#tai-anh">Tải ảnh lên</a>
@@ -52,6 +52,45 @@
         </figcaption>
       </figure>
       <div class="progress-line" id="analyzeProgress" hidden><i></i><span>AI đang đo ảnh, tìm chủ thể, trích màu…</span></div>
+    </div>
+  </section>
+
+
+  <!-- AI VISION (BYOK) -->
+  <section id="ai-vision" class="section" hidden>
+    <div class="section-head"><p class="eyebrow">NÂNG CẤP · AI VISION THẬT</p>
+      <h2>Nhận diện chủ thể sâu bằng AI Vision</h2>
+      <p class="section-sub">Phần phân tích ở trên đo bằng thuật toán pixel (nhanh, miễn phí, nhưng chỉ đoán theo màu). Muốn AI <b>nhìn hiểu nội dung ảnh</b> — đây là người hay vật gì, từng chủ thể nằm ở đâu, chi tiết nào quan trọng, rủi ro khi vẽ là gì — hãy nối một API vision bằng <b>key của chính bạn</b>. Key chỉ lưu trên trình duyệt của bạn (nếu bạn chọn ghi nhớ), ảnh chỉ gửi tới nhà cung cấp bạn chọn khi bạn bấm phân tích. Trang web này không có máy chủ và không giữ key của ai.</p></div>
+    <div class="vision-grid">
+      <div class="card">
+        <h3>🔑 Cài đặt API (OpenAI-compatible)</h3>
+        <label class="fld">Nhà cung cấp
+          <select id="vPreset">
+            <option value="openai">OpenAI — gpt-4o-mini (vision)</option>
+            <option value="oxion">Oxion — cổng của bạn (oxionai.com)</option>
+            <option value="intern">Intern InkStone — deepseek-v4-flash-vision</option>
+            <option value="gemini">Google Gemini — qua endpoint OpenAI-compatible</option>
+            <option value="xingchi">XingChi — cổng của bạn</option>
+            <option value="custom">Tùy chỉnh…</option>
+          </select></label>
+        <label class="fld">Base URL <input id="vEndpoint" type="url" spellcheck="false"></label>
+        <label class="fld">Model ID <input id="vModel" type="text" spellcheck="false"></label>
+        <label class="fld">API Key <input id="vKey" type="password" autocomplete="off" placeholder="sk-… / cc-… (key của bạn)"></label>
+        <label class="checkline"><input type="checkbox" id="vRemember"> <span>Ghi nhớ cài đặt + key trên trình duyệt này (localStorage). Không tick = key chỉ sống trong phiên mở trang.</span></label>
+        <div class="dz-actions" style="justify-content:flex-start">
+          <button class="btn btn-ghost btn-small" id="vSave" type="button">💾 Lưu cài đặt</button>
+          <button class="btn btn-ghost btn-small" id="vTest" type="button">🔌 Kiểm tra kết nối</button>
+        </div>
+        <p class="hint" id="vStatus">Chưa kiểm tra kết nối.</p>
+        <p class="hint">Mẹo theo từng cổng: <b>Oxion</b> — key dạng <code>cc_…</code>, Model ID phải chép đúng từ danh sách model của Oxion và chọn model có vision; lỗi 402 = hết hạn mức, 429 = rate limit. <b>XingChi GPT</b> — Base URL + model <code>gpt-6.1-sol</code> đã điền sẵn, nhưng lưu ý: XingChi chỉ cho app lập trình gọi API, trình duyệt sẽ bị chặn 403 (đã kiểm chứng). <b>Intern</b> — model vision đã kiểm chứng là <code>deepseek-v4-flash-vision</code>. <b>OpenAI/Gemini</b> — dùng model vision bất kỳ của hãng.</p>
+      </div>
+      <div class="card">
+        <h3>👁️ Phân tích sâu ảnh hiện tại</h3>
+        <p class="hint">Gửi bản thu nhỏ của ảnh (tối đa 1024px, JPEG) kèm yêu cầu trả JSON có cấu trúc: loại chủ thể, danh sách từng chủ thể + khung bao %, bố cục, ánh sáng, phong cách, chi tiết then chốt, rủi ro khi vẽ và <b>lời khuyên riêng cho từng bước trong 13 bước</b>. Kết quả sẽ được bơm thẳng vào từng bước học bên dưới.</p>
+        <button class="btn btn-primary" id="vRun" type="button">👁️ Phân tích sâu bằng AI Vision</button>
+        <div class="progress-line" id="vProgress" hidden><i></i><span>Đang gửi ảnh cho AI Vision và chờ nhận diện…</span></div>
+        <div id="visionResult" hidden></div>
+      </div>
     </div>
   </section>
 
@@ -136,8 +175,8 @@
     </div>
   </section>
 </main>
-<footer><p>✏️ Học Vẽ Cùng AI — phân tích & minh họa chạy 100% trên trình duyệt của bạn. Không máy chủ, không gửi ảnh đi đâu.</p>
+<footer><p>✏️ Học Vẽ Cùng AI — phân tích & minh họa chạy 100% trên trình duyệt của bạn. Không máy chủ; mặc định không gửi ảnh đi đâu — chỉ khi bạn tự nối API Vision bằng key của mình và bấm phân tích sâu, bản thu nhỏ của ảnh mới được gửi tới nhà cung cấp đó.</p>
 <p><a href="https://github.com/shin-96/hoc-ve-cung-ai" target="_blank" rel="noopener">GitHub: shin-96/hoc-ve-cung-ai</a></p></footer>
-<script src="app-v3.js"></script>
+<script src="app-v4.js"></script>
 </body>
 </html>

@@ -244,7 +244,7 @@ function renderStep(idx){
 
 /* ---------------- GIAO DIỆN ---------------- */
 function showAnalysis(){
-  const a=state.analysis; $("#phan-tich").hidden=false; $("#lo-trinh").hidden=false; $("#ve-tung-buoc").hidden=false; $("#luyen-tap").hidden=false;
+  const a=state.analysis; $("#phan-tich").hidden=false; $("#lo-trinh").hidden=false; $("#ve-tung-buoc").hidden=false; $("#luyen-tap").hidden=false; $("#ai-vision").hidden=false;
   $("#analysisSummary").textContent=`AI dự đoán chủ thể: ${a.guess} (độ tin cậy ${a.conf}%). Mọi con số dưới đây được đo trực tiếp từ ${a.w}×${a.h}px của ảnh bạn tải — hãy dùng chúng làm 'đề bài' cho 13 bước vẽ.`;
   const stats=[
     ["Kích thước gốc",`${a.w} × ${a.h} px`,`Tỉ lệ khung ${a.ratio.toFixed(2)} : 1 — ${a.orientation}. Hãy cắt giấy đúng tỉ lệ này, đừng vẽ trên giấy tỉ lệ khác rồi cố nhét vào.`],
@@ -273,6 +273,7 @@ function showAnalysis(){
   const s=Math.min(cc.width/a.aw,cc.height/a.ah),dw=a.aw*s,dh=a.ah*s,ox=(cc.width-dw)/2,oy=(cc.height-dh)/2;
   cx2.drawImage(state.img,ox,oy,dw,dh);
   cx2.strokeStyle="rgba(255,255,255,.55)";cx2.lineWidth=1;for(let i=1;i<3;i++){cx2.beginPath();cx2.moveTo(ox+dw*i/3,oy);cx2.lineTo(ox+dw*i/3,oy+dh);cx2.stroke();cx2.beginPath();cx2.moveTo(ox,oy+dh*i/3);cx2.lineTo(ox+dw,oy+dh*i/3);cx2.stroke();}
+  state.compT={ox,oy,dw,dh};
   cx2.strokeStyle="#ff3355";cx2.lineWidth=3;cx2.strokeRect(ox+a.bbox.x*dw,oy+a.bbox.y*dh,a.bbox.w*dw,a.bbox.h*dh);
   cx2.fillStyle="#ffd400";cx2.beginPath();cx2.arc(ox+a.centroid.x*dw,oy+a.centroid.y*dh,8,0,7);cx2.fill();
   // roadmap
@@ -289,7 +290,7 @@ function showStep(i){
   $("#stepCanvasCaption").textContent="📐 "+s.caption;
   $("#stepDetail").innerHTML=`
     <div class="meta"><span class="chip">📚 ${s.level}</span><span class="chip">⏱ ${s.time}</span><span class="chip">🧰 ${s.tools}</span></div>
-    <h3>🎯 Mục tiêu của bước</h3><p class="hint" style="color:#d9d6f2;font-size:14.5px">${s.goal}</p>
+    <h3>🎯 Mục tiêu của bước</h3><p class="hint" style="color:#d9d6f2;font-size:14.5px">${s.goal}</p>${visionAdviceHTML(state.step)}
     <h3>✍️ Cách làm — chi tiết từng thao tác</h3><ol>${s.how.map(x=>`<li>${x}</li>`).join("")}</ol>
     <h3>⚠️ Lỗi thường gặp</h3><div class="warn"><ul>${s.mistakes.map(x=>`<li>${x}</li>`).join("")}</ul></div>
     <h3>✅ Tự kiểm tra trước khi qua bước sau</h3>
@@ -375,3 +376,109 @@ DC.addEventListener("pointermove",e=>{if(!drawing)return;const p=pos(e);DX.lineC
 $("#undoDraw").onclick=()=>{const u=undoStack.pop();if(u)DX.putImageData(u,0,0);};
 $("#clearDraw").onclick=()=>{undoStack.push(DX.getImageData(0,0,DC.width,DC.height));DX.clearRect(0,0,DC.width,DC.height);};
 $("#downloadDraw").onclick=()=>{const out=makeCanvas(DC.width,DC.height),ox=out.getContext("2d");ox.fillStyle="#f4f1e8";ox.fillRect(0,0,out.width,out.height);ox.drawImage(GC,0,0);ox.drawImage(DC,0,0);const a=document.createElement("a");a.download="bai-ve-cua-toi.png";a.href=out.toDataURL("image/png");a.click();};
+
+/* ---------------- AI VISION (BYOK — key của chính người dùng) ---------------- */
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const VPRESETS={
+  openai:{endpoint:"https://api.openai.com/v1",model:"gpt-4o-mini"},
+  oxion:{endpoint:"https://oxionai.com/v1",model:""},
+  intern:{endpoint:"https://discovery-api.intern-ai.org.cn/v1",model:"deepseek-v4-flash-vision"},
+  gemini:{endpoint:"https://generativelanguage.googleapis.com/v1beta/openai/",model:"gemini-2.0-flash"},
+  xingchi:{endpoint:"https://api.xingchiapi.com/v1",model:"gpt-6.1-sol"},
+  custom:{endpoint:"",model:""}
+};
+const ADVICE_KEYS=["quan_sat","khung_bao","block_in","diem_neo","cau_truc_3d","am_hinh","tay_duong_dung","net_chinh","sac_do","do_bong","chi_tiet","len_mau","hoan_thien"];
+function visionAdviceHTML(i){
+  const adv=state.vision&&state.vision.step_advice&&state.vision.step_advice[ADVICE_KEYS[i]];
+  return adv?`<h3>🤖 AI Vision khuyên riêng cho ảnh này</h3><div class="vision-advice">${esc(adv)}</div>`:"";
+}
+function vCfg(){return{preset:$("#vPreset").value,endpoint:$("#vEndpoint").value.trim().replace(/\/+$/,""),model:$("#vModel").value.trim(),key:$("#vKey").value.trim(),remember:$("#vRemember").checked};}
+function vFill(cfg){ if(!cfg)return; $("#vPreset").value=cfg.preset||"openai"; $("#vEndpoint").value=cfg.endpoint||""; $("#vModel").value=cfg.model||""; $("#vRemember").checked=!!cfg.remember; if(cfg.key)$("#vKey").value=cfg.key; }
+try{ const saved=JSON.parse(localStorage.getItem("hocve_vision_cfg")||"null"); if(saved) vFill(saved); else { const p=VPRESETS.openai; $("#vEndpoint").value=p.endpoint; $("#vModel").value=p.model; } }catch(e){}
+$("#vPreset").onchange=e=>{const p=VPRESETS[e.target.value]; if(p){ if(p.endpoint)$("#vEndpoint").value=p.endpoint; if(p.model)$("#vModel").value=p.model; if(e.target.value==="xingchi")$("#vStatus").textContent="⚠️ XingChi: đã kiểm chứng bằng key thật — key hợp lệ và tài khoản chỉ có model gpt-6.1-sol, NHƯNG XingChi chặn gọi API từ trình duyệt/script (lỗi 403 client_not_allowed): cổng này chỉ cho các app lập trình (DeepSeek Harness, Cursor, Cline…) gọi. Vì vậy phân tích vision trên web bằng XingChi sẽ bị chặn — hãy dùng OpenAI / Gemini / Oxion cho web, XingChi để dành cho Harness."; }};
+$("#vSave").onclick=()=>{const c=vCfg(); const store={preset:c.preset,endpoint:c.endpoint,model:c.model,remember:c.remember}; if(c.remember&&c.key)store.key=c.key;
+  try{localStorage.setItem("hocve_vision_cfg",JSON.stringify(store));}catch(e){}
+  sessionStorage.setItem("hocve_vision_key",c.key||"");
+  $("#vStatus").textContent="✅ Đã lưu cài đặt"+(c.remember?" (kể cả key, chỉ trên trình duyệt này).":" (không lưu key — key chỉ giữ trong phiên này).");};
+function vKeyNow(){return $("#vKey").value.trim()||sessionStorage.getItem("hocve_vision_key")||"";}
+function vErr(status,body){
+  const hints={400:"Yêu cầu bị từ chối — thường do model không hỗ trợ ảnh (không có vision) hoặc sai định dạng.",401:"Key sai hoặc hết hiệu lực (401). Kiểm tra lại key.",402:"Hết hạn mức/số dư của gói (402) — nạp thêm hoặc đổi key khác.",403:"Bị chặn quyền (403). Với XingChi: cổng chỉ cho app lập trình (DeepSeek Harness, Cursor, Cline…) — trình duyệt và script bị chặn theo chính sách của XingChi (client_not_allowed), không phải do key sai.",404:"Không tìm thấy endpoint/model (404) — kiểm tra Base URL và Model ID.",429:"Rate limit (429) — chờ một lát rồi thử lại."};
+  return `❌ API trả lỗi ${status}. ${hints[status]||""} Chi tiết: ${String(body||"").slice(0,220)}`;
+}
+async function vFetch(path,options={}){
+  const c=vCfg(), key=vKeyNow();
+  if(!c.endpoint) throw new Error("Chưa điền Base URL.");
+  if(!key) throw new Error("Chưa có API key — hãy dán key của bạn vào ô API Key trước.");
+  if(!c.model&&path.includes("chat")) throw new Error("Chưa điền Model ID.");
+  const res=await fetch(c.endpoint+path,{...options,headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,...(options.headers||{})}});
+  return res;
+}
+$("#vTest").onclick=async()=>{
+  $("#vStatus").textContent="🔌 Đang gọi GET /models để kiểm tra key…";
+  try{ const res=await vFetch("/models",{method:"GET"});
+    if(res.ok){const j=await res.json().catch(()=>null); const n=j&&j.data?j.data.length:"?"; $("#vStatus").textContent=`✅ Kết nối OK — key hợp lệ, cổng trả về ${n} model. Hãy chắc chắn Model ID bạn điền có trong danh sách đó và có vision.`;}
+    else $("#vStatus").textContent=vErr(res.status,await res.text());
+  }catch(e){ $("#vStatus").textContent="❌ Không gọi được API: "+e.message+" — có thể do sai Base URL, mất mạng, hoặc cổng chặn CORS từ trình duyệt (một số cổng chỉ cho gọi từ server/app, khi đó hãy dùng cổng OpenAI/Oxion/Gemini)."; }
+};
+const VISION_PROMPT=`Bạn là chuyên gia dạy vẽ. Hãy nhìn bức ảnh này và trả về DUY NHẤT một JSON (không markdown, không giải thích ngoài JSON) đúng cấu trúc sau, mọi nội dung bằng tiếng Việt:
+{"subject_type":"loại chủ thể (chân dung/phong cảnh/tĩnh vật/kiến trúc/động vật/khác)","confidence":0-100,"summary":"2-3 câu tóm tắt nội dung ảnh","subjects":[{"name":"tên chủ thể/vật thể","bbox_pct":{"x":0-100,"y":0-100,"w":0-100,"h":0-100},"importance":"chính hoặc phụ","description":"1 câu"}],"composition":"phân tích bố cục 2-3 câu","light":{"direction":"hướng sáng","quality":"chất lượng sáng (gắt/dịu/tán xạ)","shadow_notes":"ghi chú về bóng đổ"},"style":"phong cách/thể loại của ảnh","mood":"cảm xúc tổng thể","key_details":["chi tiết then chốt không được bỏ qua khi vẽ"],"risks":["điểm dễ vẽ sai ở ảnh này"],"palette_hex":["#RRGGBB tối đa 6 màu chủ đạo"],"step_advice":{"quan_sat":"","khung_bao":"","block_in":"","diem_neo":"","cau_truc_3d":"","am_hinh":"","tay_duong_dung":"","net_chinh":"","sac_do":"","do_bong":"","chi_tiet":"","len_mau":"","hoan_thien":""}}
+Trong step_advice, mỗi ô viết 1-2 câu khuyên CỤ THỂ cho đúng ảnh này ở bước vẽ tương ứng (ví dụ ở tay_duong_dung: đường dựng nào nên tẩy trước; ở do_bong: bóng nào quan trọng nhất). bbox_pct tính theo % chiều rộng/cao của toàn ảnh, (x,y) là góc trái-trên.`;
+function parseVisionJSON(text){
+  if(!text) throw new Error("API không trả nội dung.");
+  let s=String(text).trim().replace(/^```(?:json)?/i,"").replace(/```$/,"").trim();
+  const a=s.indexOf("{"), b=s.lastIndexOf("}"); if(a>=0&&b>a) s=s.slice(a,b+1);
+  const obj=JSON.parse(s);
+  if(typeof obj!=="object"||!obj) throw new Error("JSON không hợp lệ.");
+  obj.subjects=Array.isArray(obj.subjects)?obj.subjects:[];
+  obj.key_details=Array.isArray(obj.key_details)?obj.key_details:[]; obj.risks=Array.isArray(obj.risks)?obj.risks:[];
+  obj.palette_hex=Array.isArray(obj.palette_hex)?obj.palette_hex:[]; obj.step_advice=obj.step_advice||{}; obj.light=obj.light||{};
+  return obj;
+}
+function downscaledDataURL(img){
+  const [w,h]=fitSize(img.naturalWidth||img.width,img.naturalHeight||img.height,1024);
+  const c=makeCanvas(w,h),x=c.getContext("2d"); x.fillStyle="#fff"; x.fillRect(0,0,w,h); x.drawImage(img,0,0,w,h);
+  return c.toDataURL("image/jpeg",0.82);
+}
+function drawVisionBoxes(){
+  if(!state.compT||!state.vision) return; const {ox,oy,dw,dh}=state.compT, cx2=$("#compCanvas").getContext("2d");
+  cx2.save(); cx2.lineWidth=2.5; cx2.font="bold 13px sans-serif";
+  state.vision.subjects.forEach((s2,i)=>{ const b=s2.bbox_pct||{}; const x=ox+(+b.x||0)/100*dw, y=oy+(+b.y||0)/100*dh, w2=(+b.w||0)/100*dw, h2=(+b.h||0)/100*dh;
+    if(w2<4||h2<4)return; const col=i===0?"#2cb67d":"#00b4d8"; cx2.strokeStyle=col; cx2.strokeRect(x,y,w2,h2);
+    cx2.fillStyle=col; const label=esc(s2.name||`Chủ thể ${i+1}`); cx2.fillRect(x,Math.max(0,y-20),Math.min(220,label.length*8.5+12),19);
+    cx2.fillStyle="#06121f"; cx2.fillText(s2.name||`Chủ thể ${i+1}`,x+6,Math.max(14,y-6)); });
+  cx2.restore();
+}
+function renderVision(v){
+  const box=$("#visionResult"); box.hidden=false;
+  box.innerHTML=`
+   <div class="verdict" style="margin-top:0"><b>👁️ AI Vision nhận diện:</b> ${esc(v.subject_type||"—")} <b>(${esc(v.confidence??"—")}%)</b> — ${esc(v.summary||"")}</div>
+   <h4>🧩 Các chủ thể AI nhìn thấy (khung xanh đã vẽ lên sơ đồ bố cục ở phần Phân tích)</h4>
+   <div>${v.subjects.map(s2=>`<span class="subject-chip">${esc(s2.importance==="chính"?"⭐ ":"")}${esc(s2.name||"")} · ${esc(Math.round(s2.bbox_pct?.w||0))}×${esc(Math.round(s2.bbox_pct?.h||0))}% khung</span>`).join("")||"<span class='hint'>AI không liệt kê chủ thể riêng lẻ.</span>"}</div>
+   ${v.subjects.map(s2=>s2.description?`<p class="hint">• <b style="color:var(--text)">${esc(s2.name||"")}</b> — ${esc(s2.description)}</p>`:"").join("")}
+   <h4>🧭 Bố cục · 💡 Ánh sáng · 🎭 Phong cách & cảm xúc</h4>
+   <ul><li><b>Bố cục:</b> ${esc(v.composition||"—")}</li>
+   <li><b>Ánh sáng:</b> ${esc(v.light.direction||"—")} · ${esc(v.light.quality||"")} ${v.light.shadow_notes?`— ${esc(v.light.shadow_notes)}`:""}</li>
+   <li><b>Phong cách:</b> ${esc(v.style||"—")} · <b>Cảm xúc:</b> ${esc(v.mood||"—")}</li></ul>
+   <h4>🔑 Chi tiết then chốt</h4><ul>${v.key_details.map(d=>`<li>${esc(d)}</li>`).join("")||"<li>—</li>"}</ul>
+   <h4>⚠️ Rủi ro dễ vẽ sai ở ảnh này</h4><ul>${v.risks.map(d=>`<li>${esc(d)}</li>`).join("")||"<li>—</li>"}</ul>
+   ${v.palette_hex.length?`<h4>🎨 Palette theo AI Vision</h4><div class="palette">${v.palette_hex.map(hx=>`<div class="swatch"><i style="background:${esc(hx)}"></i><small>${esc(hx)}</small></div>`).join("")}</div>`:""}
+   <p class="hint">💡 Lời khuyên riêng của AI Vision cho từng bước đã được bơm vào mục <b>“🤖 AI Vision khuyên riêng cho ảnh này”</b> trong phần Vẽ từng bước bên dưới — hãy mở từng bước để đọc.</p>`;
+  drawVisionBoxes();
+}
+$("#vRun").onclick=async()=>{
+  if(!state.img){$("#vStatus").textContent="Hãy tải một ảnh lên trước đã.";return;}
+  const c=vCfg(); $("#vProgress").hidden=false; $("#vStatus").textContent="";
+  try{
+    const res=await vFetch("/chat/completions",{method:"POST",body:JSON.stringify({
+      model:c.model, temperature:0.2, max_tokens:2000,
+      messages:[{role:"user",content:[{type:"text",text:VISION_PROMPT},{type:"image_url",image_url:{url:downscaledDataURL(state.img)}}]}]
+    })});
+    if(!res.ok) throw new Error(vErr(res.status,await res.text()));
+    const j=await res.json(); const text=j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;
+    state.vision=parseVisionJSON(text);
+    renderVision(state.vision);
+    $("#vStatus").textContent=`✅ Phân tích sâu xong bằng model ${c.model}. Mở từng bước học bên dưới để xem lời khuyên riêng.`;
+    if(!$("#ve-tung-buoc").hidden) showStep(state.step);
+  }catch(e){ $("#vStatus").textContent="❌ Phân tích sâu thất bại: "+e.message; }
+  finally{ $("#vProgress").hidden=true; }
+};

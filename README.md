@@ -61,6 +61,13 @@ Kèm: thanh trượt **so sánh với ảnh gốc**, nút **trình chiếu tự 
 ### 4. Phòng luyện tập
 Canvas vẽ đè lên hình mẫu mờ của bước đang học, có **bút chì + tẩy thật** (tẩy xóa nét như tẩy dẻo), chỉnh cỡ nét, độ mờ hình mẫu, hoàn tác, xóa hết và tải bài vẽ PNG.
 
+### 5. AI Vision thật (tùy chọn, BYOK — dùng key của chính bạn)
+Panel **AI Vision** cho phép nối bất kỳ cổng OpenAI-compatible nào có model vision (OpenAI, Gemini qua endpoint tương thích, Oxion, Intern InkStone, XingChi…). Key chỉ lưu trên trình duyệt của người dùng (localStorage nếu tick ghi nhớ), trang web không có máy chủ và không giữ key.
+
+Khi bấm **Phân tích sâu**, trang gửi bản thu nhỏ của ảnh (≤1024px JPEG) kèm prompt yêu cầu JSON có cấu trúc: loại chủ thể + độ tin cậy, danh sách từng chủ thể với khung bao % (được vẽ đè lên sơ đồ bố cục), bố cục, ánh sáng, phong cách, cảm xúc, chi tiết then chốt, rủi ro dễ vẽ sai, palette và **lời khuyên riêng cho từng bước trong 13 bước** — các lời khuyên này tự xuất hiện trong mục “🤖 AI Vision khuyên riêng cho ảnh này” ở phần Vẽ từng bước.
+
+**Giới hạn đã kiểm chứng (18/11/2026):** XingChi chỉ cho các app lập trình (DeepSeek Harness, Cursor, Cline…) gọi API và chặn trình duyệt/script với lỗi `403 client_not_allowed` — key XingChi của chủ repo hợp lệ (đọc được danh sách model, tài khoản chỉ có `gpt-6.1-sol`) nhưng không dùng được cho vision trên web. Muốn vision trên web, hãy dùng key OpenAI / Gemini / Oxion trong panel.
+
 ## Công nghệ
 HTML + CSS + JavaScript thuần (không framework, không build). Xử lý ảnh bằng Canvas API: Sobel, lượng tử hóa màu, posterize sắc độ, ước lượng chủ thể theo độ lệch màu nền.
 
